@@ -1,18 +1,17 @@
 import React, { useCallback, useMemo } from 'react';
 import { Pressable, Text, View, ScrollView, Dimensions } from 'react-native';
 import Animated, {
-  FadeIn,
-  FadeOut,
-  SlideInDown,
-  SlideOutDown,
   useAnimatedStyle,
   useSharedValue,
   withSpring,
   withTiming,
 } from 'react-native-reanimated';
 import { useGridStore } from '../../store/gridStore';
+import { getPreference } from '../../store/mmkv';
 import { useSyncGrid } from '../../hooks/useSyncGrid';
 import CourseBlock from './CourseBlock';
+import TapToCreateModal from './TapToCreateModal';
+import type { TaskNodeExtended } from '../../store/gridStore';
 
 const WEEKDAYS = ['周一', '周二', '周三', '周四', '周五', '周六', '周日'];
 const TOTAL_PERIODS = 12;
@@ -29,12 +28,36 @@ const EMPTY_CELL_COLORS = [
 
 const AnimatedPressable = Animated.createAnimatedComponent(Pressable);
 
-// ===== 时间轴 =====
+// ============================================================
+// 工具函数
+// ============================================================
+
+function formatDate(d: Date): string {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
+}
+
+function computeWeekDates(semesterStart: string, week: number): string[] {
+  const start = new Date(semesterStart + 'T00:00:00');
+  const monday = new Date(start);
+  monday.setDate(start.getDate() + (week - 1) * 7);
+  return Array.from({ length: 7 }, (_, i) => {
+    const d = new Date(monday);
+    d.setDate(monday.getDate() + i);
+    return formatDate(d);
+  });
+}
+
+// ============================================================
+// 时间轴
+// ============================================================
+
 const TimeColumn: React.FC = React.memo(() => {
   const timeSlots = useGridStore((s) => s.timeSlots);
   return (
     <View style={{ width: TIME_COL_WIDTH }}>
-      {/* 表头占位 */}
       <View style={{ height: HEADER_HEIGHT }} />
       {timeSlots.map((slot) => (
         <View
@@ -57,10 +80,13 @@ const TimeColumn: React.FC = React.memo(() => {
   );
 });
 
-// ===== 星期表头 =====
+// ============================================================
+// 星期表头
+// ============================================================
+
 const WeekdayHeader: React.FC = React.memo(() => (
   <View style={{ flexDirection: 'row' }}>
-    {WEEKDAYS.map((day, i) => (
+    {WEEKDAYS.map((day) => (
       <View
         key={day}
         style={{
@@ -78,15 +104,19 @@ const WeekdayHeader: React.FC = React.memo(() => (
   </View>
 ));
 
-// ===== 单个空格（可点击） =====
+// ============================================================
+// 单个空格（可点击）
+// ============================================================
+
 interface EmptyCellProps {
   dayOfWeek: number;
   period: number;
-  onTap: (day: number, period: number) => void;
+  dateStr: string;
+  onTap: (day: number, period: number, dateStr: string) => void;
 }
 
 const EmptyCell: React.FC<EmptyCellProps> = React.memo(
-  ({ dayOfWeek, period, onTap }) => {
+  ({ dayOfWeek, period, dateStr, onTap }) => {
     const scale = useSharedValue(1);
     const bgColor = useSharedValue('transparent');
 
@@ -120,21 +150,25 @@ const EmptyCell: React.FC<EmptyCellProps> = React.memo(
         ]}
         onPressIn={handlePressIn}
         onPressOut={handlePressOut}
-        onPress={() => onTap(dayOfWeek, period)}
+        onPress={() => onTap(dayOfWeek, period, dateStr)}
       />
     );
   },
 );
 
-// ===== 某一列的所有空格 =====
+// ============================================================
+// 某一列的所有空格
+// ============================================================
+
 interface GridColumnProps {
   dayOfWeek: number;
+  dateStr: string;
   occupiedPeriods: Set<number>;
-  onTap: (day: number, period: number) => void;
+  onTap: (day: number, period: number, dateStr: string) => void;
 }
 
 const GridColumn: React.FC<GridColumnProps> = React.memo(
-  ({ dayOfWeek, occupiedPeriods, onTap }) => (
+  ({ dayOfWeek, dateStr, occupiedPeriods, onTap }) => (
     <View style={{ width: COL_WIDTH }}>
       {Array.from({ length: TOTAL_PERIODS }, (_, i) => i + 1).map(
         (period) =>
@@ -143,6 +177,7 @@ const GridColumn: React.FC<GridColumnProps> = React.memo(
               key={period}
               dayOfWeek={dayOfWeek}
               period={period}
+              dateStr={dateStr}
               onTap={onTap}
             />
           ),
@@ -151,134 +186,62 @@ const GridColumn: React.FC<GridColumnProps> = React.memo(
   ),
 );
 
-// ===== 快速创建浮层 =====
-interface QuickCreateProps {
-  dayOfWeek: number;
-  period: number;
-  onClose: () => void;
+// ============================================================
+// 软待办色块（低饱和度、半透明、错落叠放）
+// ============================================================
+
+interface TaskSlotBlockProps {
+  task: TaskNodeExtended;
+  index: number;
+  rowHeight: number;
 }
 
-const QuickCreateOverlay: React.FC<QuickCreateProps> = React.memo(
-  ({ dayOfWeek, period, onClose }) => {
-    const timeSlots = useGridStore((s) => s.timeSlots);
-    const slot = timeSlots.find((s) => s.period === period);
+const TASK_PASTEL = {
+  bg: '#D0D8E0',
+  text: '#5A6A7A',
+};
+
+const TaskSlotBlock: React.FC<TaskSlotBlockProps> = React.memo(
+  ({ task, index, rowHeight }) => {
+    // 错落偏置：偶数项靠左，奇数项右移，形成视觉层次
+    const leftOffset = index % 2 === 0 ? 2 : COL_WIDTH * 0.45;
 
     return (
-      <Animated.View
-        entering={FadeIn.duration(200)}
-        exiting={FadeOut.duration(150)}
+      <View
         style={{
           position: 'absolute',
-          top: 0,
-          left: 0,
-          right: 0,
-          bottom: 0,
-          backgroundColor: 'rgba(0,0,0,0.25)',
-          zIndex: 100,
+          top: index * rowHeight + 2,
+          left: leftOffset,
+          width: '45%',
+          height: rowHeight - 6,
+          backgroundColor: TASK_PASTEL.bg,
+          borderRadius: 8,
+          opacity: 0.6,
+          paddingHorizontal: 6,
+          paddingVertical: 4,
           justifyContent: 'center',
-          alignItems: 'center',
+          zIndex: 5,
         }}
       >
-        <Pressable style={{ flex: 1, width: '100%' }} onPress={onClose} />
-        <Animated.View
-          entering={SlideInDown.springify().damping(18)}
-          exiting={SlideOutDown.duration(200)}
+        <Text
           style={{
-            position: 'absolute',
-            bottom: 0,
-            left: 0,
-            right: 0,
-            backgroundColor: '#fff',
-            borderTopLeftRadius: 24,
-            borderTopRightRadius: 24,
-            paddingHorizontal: 24,
-            paddingTop: 20,
-            paddingBottom: 40,
-            elevation: 12,
-            shadowColor: '#000',
-            shadowOffset: { width: 0, height: -4 },
-            shadowOpacity: 0.12,
-            shadowRadius: 16,
+            fontSize: 10,
+            fontWeight: '600',
+            color: TASK_PASTEL.text,
           }}
+          numberOfLines={2}
         >
-          {/* 拖拽指示条 */}
-          <View
-            style={{
-              width: 40,
-              height: 4,
-              borderRadius: 2,
-              backgroundColor: '#E0E0E0',
-              alignSelf: 'center',
-              marginBottom: 16,
-            }}
-          />
-
-          <Text style={{ fontSize: 20, fontWeight: '700', color: '#333' }}>
-            极速创建任务
-          </Text>
-
-          <View
-            style={{
-              flexDirection: 'row',
-              marginTop: 12,
-              alignItems: 'center',
-            }}
-          >
-            <View
-              style={{
-                backgroundColor: '#E2C2F0',
-                paddingHorizontal: 12,
-                paddingVertical: 6,
-                borderRadius: 20,
-                marginRight: 8,
-              }}
-            >
-              <Text style={{ fontSize: 13, color: '#7B4F9D', fontWeight: '600' }}>
-                {WEEKDAYS[dayOfWeek - 1]}
-              </Text>
-            </View>
-            <View
-              style={{
-                backgroundColor: '#B3E5FC',
-                paddingHorizontal: 12,
-                paddingVertical: 6,
-                borderRadius: 20,
-                marginRight: 8,
-              }}
-            >
-              <Text style={{ fontSize: 13, color: '#2A7A9D', fontWeight: '600' }}>
-                第{period}节
-              </Text>
-            </View>
-            {slot && (
-              <Text style={{ fontSize: 12, color: '#999' }}>
-                {slot.startTime} - {slot.endTime}
-              </Text>
-            )}
-          </View>
-
-          {/* 这里预留输入区域，由业务层扩展 */}
-          <View
-            style={{
-              marginTop: 20,
-              height: 48,
-              backgroundColor: '#F5F5F5',
-              borderRadius: 12,
-              justifyContent: 'center',
-              paddingHorizontal: 16,
-            }}
-          >
-            <Text style={{ color: '#BBB', fontSize: 14 }}>
-              输入任务名称...
-            </Text>
-          </View>
-        </Animated.View>
-      </Animated.View>
+          {task.title}
+        </Text>
+      </View>
     );
   },
 );
 
-// ===== 周次切换条 =====
+// ============================================================
+// 周次切换条
+// ============================================================
+
 const WeekSwitcher: React.FC = React.memo(() => {
   const currentWeek = useGridStore((s) => s.currentWeek);
   const setCurrentWeek = useGridStore((s) => s.setCurrentWeek);
@@ -356,16 +319,18 @@ const WeekSwitcher: React.FC = React.memo(() => {
   );
 });
 
-// ===== 主网格组件 =====
+// ============================================================
+// 主网格组件
+// ============================================================
+
 const TheGrid: React.FC = () => {
   const { isLoading } = useSyncGrid();
   const courses = useGridStore((s) => s.courses);
-  const selectedCell = useGridStore((s) => s.selectedCell);
-  const showQuickCreate = useGridStore((s) => s.showQuickCreate);
-  const setSelectedCell = useGridStore((s) => s.setSelectedCell);
-  const setShowQuickCreate = useGridStore((s) => s.setShowQuickCreate);
+  const dayTasks = useGridStore((s) => s.dayTasks);
+  const currentWeek = useGridStore((s) => s.currentWeek);
+  const openCreateModal = useGridStore((s) => s.openCreateModal);
 
-  // loading 时网格轻微淡出，切换周次时丝滑过渡
+  // loading 时网格轻微淡出
   const loadingProgress = useSharedValue(0);
 
   React.useEffect(() => {
@@ -373,46 +338,54 @@ const TheGrid: React.FC = () => {
   }, [isLoading, loadingProgress]);
 
   const gridAnimatedStyle = useAnimatedStyle(() => ({
-    opacity: 1 - loadingProgress.value * 0.35, // 最低 0.65 透明度
+    opacity: 1 - loadingProgress.value * 0.35,
   }));
 
-  // 计算每列已占用的 period（用于排除空格渲染）
+  // ── 1. 计算本周 7 天的绝对日期 ──
+  const dateStrMap = useMemo(() => {
+    const semesterStart = getPreference('semester_start_date', '');
+    if (!semesterStart) return {} as Record<number, string>;
+    const dates = computeWeekDates(semesterStart, currentWeek);
+    const map: Record<number, string> = {};
+    for (let i = 0; i < 7; i++) map[i + 1] = dates[i];
+    return map;
+  }, [currentWeek]);
+
+  // ── 2. 计算每列已占用的 period ──
   const occupiedMap = useMemo(() => {
     const map = new Map<number, Set<number>>();
     for (let d = 1; d <= 7; d++) map.set(d, new Set());
     courses.forEach((c) => {
       const set = map.get(c.dayOfWeek);
       if (set) {
-        for (let p = c.startPeriod; p <= c.endPeriod; p++) {
-          set.add(p);
-        }
+        for (let p = c.startPeriod; p <= c.endPeriod; p++) set.add(p);
       }
     });
     return map;
   }, [courses]);
 
-  // 按列分组课程
+  // ── 3. 按列分组课程 ──
   const coursesByDay = useMemo(() => {
     const grouped = new Map<number, typeof courses>();
     for (let d = 1; d <= 7; d++) grouped.set(d, []);
-    courses.forEach((c) => {
-      grouped.get(c.dayOfWeek)?.push(c);
-    });
+    courses.forEach((c) => grouped.get(c.dayOfWeek)?.push(c));
     return grouped;
   }, [courses]);
 
-  const handleCellTap = useCallback(
-    (dayOfWeek: number, period: number) => {
-      setSelectedCell({ dayOfWeek, period });
-      setShowQuickCreate(true);
-    },
-    [setSelectedCell, setShowQuickCreate],
-  );
+  // ── 4. 按列分组软待办 ──
+  const tasksByDay = useMemo(() => {
+    const grouped = new Map<number, TaskNodeExtended[]>();
+    for (let d = 1; d <= 7; d++) grouped.set(d, dayTasks[d] ?? []);
+    return grouped;
+  }, [dayTasks]);
 
-  const handleCloseQuickCreate = useCallback(() => {
-    setShowQuickCreate(false);
-    setSelectedCell(null);
-  }, [setShowQuickCreate, setSelectedCell]);
+  // ── 回调 ──
+  const handleCellTap = useCallback(
+    (dayOfWeek: number, period: number, dateStr: string) => {
+      openCreateModal(dayOfWeek, period, dateStr);
+    },
+    [openCreateModal],
+  );
 
   const handleCoursePress = useCallback((_id: string) => {
     // TODO: 打开课程详情 / 编辑
@@ -425,81 +398,105 @@ const TheGrid: React.FC = () => {
       {/* 周次切换 */}
       <WeekSwitcher />
 
-      {/* 网格主体，loading 时淡出 */}
+      {/* 网格主体 */}
       <Animated.View style={[{ flex: 1 }, gridAnimatedStyle]}>
-      <ScrollView
-        style={{ flex: 1 }}
-        contentContainerStyle={{ minHeight: gridHeight + 80 }}
-        showsVerticalScrollIndicator={false}
-        bounces
-      >
-        <View style={{ flexDirection: 'row' }}>
-          {/* 时间轴 */}
-          <TimeColumn />
+        <ScrollView
+          style={{ flex: 1 }}
+          contentContainerStyle={{ minHeight: gridHeight + 80 }}
+          showsVerticalScrollIndicator={false}
+          bounces
+        >
+          <View style={{ flexDirection: 'row' }}>
+            {/* 时间轴 */}
+            <TimeColumn />
 
-          {/* 网格主体 */}
-          <View>
-            {/* 星期表头 */}
-            <WeekdayHeader />
+            {/* 网格主体 */}
+            <View>
+              {/* 星期表头 */}
+              <WeekdayHeader />
 
-            {/* 课程色块层（绝对定位） */}
-            <View style={{ position: 'relative' }}>
-              {/* 空格点击层 */}
-              <View style={{ flexDirection: 'row' }}>
-                {Array.from({ length: 7 }, (_, i) => i + 1).map((day) => (
-                  <GridColumn
-                    key={day}
-                    dayOfWeek={day}
-                    occupiedPeriods={occupiedMap.get(day) ?? new Set()}
-                    onTap={handleCellTap}
-                  />
-                ))}
-              </View>
-
-              {/* 课程色块叠加 */}
-              {Array.from({ length: 7 }, (_, i) => i + 1).map((day) => {
-                const dayCourses = coursesByDay.get(day) ?? [];
-                const leftOffset = (day - 1) * COL_WIDTH;
-                return dayCourses.map((course) => (
-                  <View
-                    key={course.id}
-                    style={{
-                      position: 'absolute',
-                      left: leftOffset,
-                      width: COL_WIDTH,
-                      top: 0,
-                      bottom: 0,
-                    }}
-                  >
-                    <CourseBlock
-                      id={course.id}
-                      name={course.name}
-                      classroom={course.classroom}
-                      teacher={course.teacher}
-                      startPeriod={course.startPeriod}
-                      endPeriod={course.endPeriod}
-                      colorIndex={course.colorIndex}
-                      rowHeight={ROW_HEIGHT}
-                      headerHeight={0}
-                      onPress={handleCoursePress}
+              {/* 格子容器层 */}
+              <View style={{ position: 'relative' }}>
+                {/* 空格点击层 + 软待办层 */}
+                <View style={{ flexDirection: 'row' }}>
+                  {Array.from({ length: 7 }, (_, i) => i + 1).map((day) => (
+                    <GridColumn
+                      key={day}
+                      dayOfWeek={day}
+                      dateStr={dateStrMap[day] ?? ''}
+                      occupiedPeriods={occupiedMap.get(day) ?? new Set()}
+                      onTap={handleCellTap}
                     />
-                  </View>
-                ));
-              })}
+                  ))}
+                </View>
+
+                {/* 软待办色块叠加（低饱和度半透明） */}
+                {Array.from({ length: 7 }, (_, i) => i + 1).map((day) => {
+                  const dayItems = tasksByDay.get(day) ?? [];
+                  if (dayItems.length === 0) return null;
+                  const leftOffset = (day - 1) * COL_WIDTH;
+                  return (
+                    <View
+                      key={`tasks-${day}`}
+                      style={{
+                        position: 'absolute',
+                        left: leftOffset,
+                        width: COL_WIDTH,
+                        top: 0,
+                        bottom: 0,
+                      }}
+                      pointerEvents="none"
+                    >
+                      {dayItems.map((task, idx) => (
+                        <TaskSlotBlock
+                          key={task.id}
+                          task={task}
+                          index={idx}
+                          rowHeight={ROW_HEIGHT}
+                        />
+                      ))}
+                    </View>
+                  );
+                })}
+
+                {/* 硬日程课程色块叠加（高饱和度悬浮） */}
+                {Array.from({ length: 7 }, (_, i) => i + 1).map((day) => {
+                  const dayCourses = coursesByDay.get(day) ?? [];
+                  const leftOffset = (day - 1) * COL_WIDTH;
+                  return dayCourses.map((course) => (
+                    <View
+                      key={course.id}
+                      style={{
+                        position: 'absolute',
+                        left: leftOffset,
+                        width: COL_WIDTH,
+                        top: 0,
+                        bottom: 0,
+                      }}
+                    >
+                      <CourseBlock
+                        id={course.id}
+                        name={course.name}
+                        classroom={course.classroom}
+                        teacher={course.teacher}
+                        startPeriod={course.startPeriod}
+                        endPeriod={course.endPeriod}
+                        colorIndex={course.colorIndex}
+                        rowHeight={ROW_HEIGHT}
+                        headerHeight={0}
+                        onPress={handleCoursePress}
+                      />
+                    </View>
+                  ));
+                })}
+              </View>
             </View>
           </View>
-        </View>
-      </ScrollView>
+        </ScrollView>
       </Animated.View>
 
-      {/* 快速创建浮层 */}
-      {showQuickCreate && selectedCell && (
-        <QuickCreateOverlay
-          dayOfWeek={selectedCell.dayOfWeek}
-          period={selectedCell.period}
-          onClose={handleCloseQuickCreate}
-        />
-      )}
+      {/* 创建浮层 */}
+      <TapToCreateModal />
     </View>
   );
 };
