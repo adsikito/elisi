@@ -57,6 +57,7 @@ export interface AppPreferences {
   /** 主题模式 */
   theme: 'system' | 'light' | 'dark';
   /** 是否显示周末（周六/周日） */
+  byok_model: string;
   show_weekend: boolean;
   /** 课程表起始节次（有些学校第1节是早自习） */
   grid_start_period: number;

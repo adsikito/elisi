@@ -8,8 +8,8 @@ import {
   getRootTasks,
   updateTaskStatus,
 } from '@/db';
+import { getSchedulesByWeek } from '../db/queries';
 import { useGridStore } from '@/store/gridStore';
-import { getPreference } from '@/store/mmkv';
 
 export interface FlatRow {
   id: string;
@@ -73,48 +73,58 @@ function collectDescendantIds(list: FlatRow[], parentId: string): string[] {
   return ids;
 }
 
-function getCurrentWeekMondayStr(): string {
-  const monday = new Date();
-  const day = monday.getDay();
-  const offset = day === 0 ? -6 : 1 - day;
-  monday.setDate(monday.getDate() + offset);
-  return formatDate(monday);
+function formatPeriodRange(start: number, end: number): string {
+  return start === end ? `第${start}节` : `第${start}-${end}节`;
 }
 
-function parseDateStringLocal(dateStr: string): Date {
-  const [year, month, day] = dateStr.substring(0, 10).split('-').map(Number);
-  return new Date(year, month - 1, day);
-}
+async function generateFreeSlots(currentWeek: number): Promise<string> {
+  const freeGrid: boolean[][] = Array.from({ length: 7 }, () => Array(12).fill(true));
+  const courses = await getSchedulesByWeek(currentWeek);
 
-function normalizeToMonday(dateStr: string): Date {
-  const date = parseDateStringLocal(dateStr);
-  const day = date.getDay();
-  const offset = day === 0 ? -6 : 1 - day;
-  date.setDate(date.getDate() + offset);
-  return date;
-}
+  for (const course of courses) {
+    const dayIdx = course.day_of_week - 1;
+    if (dayIdx < 0 || dayIdx >= 7) continue;
 
-function formatDate(date: Date): string {
-  const year = date.getFullYear();
-  const month = String(date.getMonth() + 1).padStart(2, '0');
-  const day = String(date.getDate()).padStart(2, '0');
-  return `${year}-${month}-${day}`;
-}
+    const start = Math.max(1, course.start_period);
+    const end = Math.min(12, course.end_period);
+    if (start > end) continue;
 
-function generateFreeSlots(): string {
-  const currentWeek = useGridStore.getState().currentWeek;
-  const semesterStart =
-    getPreference('semester_start_date', '').trim() || getCurrentWeekMondayStr();
-  const monday = normalizeToMonday(semesterStart);
-  monday.setDate(monday.getDate() + (currentWeek - 1) * 7);
+    for (let period = start; period <= end; period += 1) {
+      freeGrid[dayIdx][period - 1] = false;
+    }
+  }
 
-  const labels = WEEKDAY_LABELS.map((label, index) => {
-    const date = new Date(monday);
-    date.setDate(monday.getDate() + index);
-    return `${formatDate(date)}(${label}) 第8-12节`;
-  });
+  const daySummaries: string[] = [];
 
-  return `可排期时间（第${currentWeek}周）: ${labels.join('；')}`;
+  for (let dayIdx = 0; dayIdx < 7; dayIdx += 1) {
+    const dayFreeSlots = freeGrid[dayIdx];
+    const ranges: string[] = [];
+
+    let rangeStart = -1;
+    for (let period = 1; period <= 12; period += 1) {
+      if (dayFreeSlots[period - 1]) {
+        if (rangeStart === -1) {
+          rangeStart = period;
+        }
+        continue;
+      }
+
+      if (rangeStart !== -1) {
+        ranges.push(formatPeriodRange(rangeStart, period - 1));
+        rangeStart = -1;
+      }
+    }
+
+    if (rangeStart !== -1) {
+      ranges.push(formatPeriodRange(rangeStart, 12));
+    }
+
+    if (ranges.length > 0) {
+      daySummaries.push(`${WEEKDAY_LABELS[dayIdx]}空闲: ${ranges.join(', ')}`);
+    }
+  }
+
+  return daySummaries.join('; ');
 }
 
 function buildTaskDescription(subTask: ScheduledSubTask): string {
@@ -236,12 +246,13 @@ export const useTaskStore = create<TaskState>((set, get) => ({
     if (idx === -1) return;
 
     const taskTitle = flatList[idx].title;
-    const freeSlotsMap = generateFreeSlots();
+    const currentWeek = useGridStore.getState().currentWeek;
 
     set((s) => ({ loadingIds: { ...s.loadingIds, [id]: true } }));
 
     try {
-      const result = await streamTaskBreakdown(taskTitle, freeSlotsMap);
+      const freeSlotsStr = await generateFreeSlots(currentWeek);
+      const result = await streamTaskBreakdown(taskTitle, freeSlotsStr);
       const subs = Array.isArray(result.sub_tasks) ? result.sub_tasks : [];
       if (subs.length === 0) return;
 

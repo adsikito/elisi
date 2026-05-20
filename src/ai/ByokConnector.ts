@@ -2,7 +2,7 @@
  * BYOK AI connector for task breakdown and scheduling.
  */
 
-import { getApiKey } from '@/store/mmkv';
+import { getApiKey, getPreference } from '@/store/mmkv';
 import type {
   ScheduledSubTask,
   TaskBreakdownResult,
@@ -168,6 +168,7 @@ async function callOpenAI(
   apiKey: string,
   baseUrl?: string,
 ): Promise<TaskBreakdownResult> {
+  const customModel = getPreference('byok_model', '').trim();
   const url = baseUrl
     ? `${baseUrl.replace(/\/$/, '')}/v1/chat/completions`
     : OPENAI_API_URL;
@@ -179,7 +180,7 @@ async function callOpenAI(
       Authorization: `Bearer ${apiKey}`,
     },
     body: JSON.stringify({
-      model: DEFAULT_OPENAI_MODEL,
+      model: customModel || DEFAULT_OPENAI_MODEL,
       messages: [
         { role: 'system', content: SYSTEM_PROMPT },
         { role: 'user', content: buildUserPrompt(parentTaskTitle, freeSlotsMap) },
@@ -209,6 +210,7 @@ async function callClaude(
   apiKey: string,
   baseUrl?: string,
 ): Promise<TaskBreakdownResult> {
+  const customModel = getPreference('byok_model', '').trim();
   const url = baseUrl
     ? `${baseUrl.replace(/\/$/, '')}/v1/messages`
     : CLAUDE_API_URL;
@@ -221,7 +223,7 @@ async function callClaude(
       'anthropic-version': '2023-06-01',
     },
     body: JSON.stringify({
-      model: DEFAULT_CLAUDE_MODEL,
+      model: customModel || DEFAULT_CLAUDE_MODEL,
       max_tokens: 1024,
       system: SYSTEM_PROMPT,
       messages: [
