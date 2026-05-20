@@ -10,6 +10,7 @@ import { useGridStore } from '../../store/gridStore';
 import { getPreference } from '../../store/mmkv';
 import { useSyncGrid } from '../../hooks/useSyncGrid';
 import CourseBlock from './CourseBlock';
+import TaskSlotBlock from './TaskSlotBlock';
 import TapToCreateModal from './TapToCreateModal';
 import type { TaskNodeExtended } from '../../store/gridStore';
 
@@ -39,10 +40,17 @@ function formatDate(d: Date): string {
   return `${y}-${m}-${day}`;
 }
 
+function normalizeToMonday(dateStr: string): Date {
+  const d = new Date(dateStr + 'T00:00:00');
+  const dow = d.getDay(); // 0=Sun,1=Mon,...,6=Sat
+  const offset = dow === 0 ? -6 : 1 - dow; // 回退到周一
+  d.setDate(d.getDate() + offset);
+  return d;
+}
+
 function computeWeekDates(semesterStart: string, week: number): string[] {
-  const start = new Date(semesterStart + 'T00:00:00');
-  const monday = new Date(start);
-  monday.setDate(start.getDate() + (week - 1) * 7);
+  const monday = normalizeToMonday(semesterStart);
+  monday.setDate(monday.getDate() + (week - 1) * 7);
   return Array.from({ length: 7 }, (_, i) => {
     const d = new Date(monday);
     d.setDate(monday.getDate() + i);
@@ -184,58 +192,6 @@ const GridColumn: React.FC<GridColumnProps> = React.memo(
       )}
     </View>
   ),
-);
-
-// ============================================================
-// 软待办色块（低饱和度、半透明、错落叠放）
-// ============================================================
-
-interface TaskSlotBlockProps {
-  task: TaskNodeExtended;
-  index: number;
-  rowHeight: number;
-}
-
-const TASK_PASTEL = {
-  bg: '#D0D8E0',
-  text: '#5A6A7A',
-};
-
-const TaskSlotBlock: React.FC<TaskSlotBlockProps> = React.memo(
-  ({ task, index, rowHeight }) => {
-    // 错落偏置：偶数项靠左，奇数项右移，形成视觉层次
-    const leftOffset = index % 2 === 0 ? 2 : COL_WIDTH * 0.45;
-
-    return (
-      <View
-        style={{
-          position: 'absolute',
-          top: index * rowHeight + 2,
-          left: leftOffset,
-          width: '45%',
-          height: rowHeight - 6,
-          backgroundColor: TASK_PASTEL.bg,
-          borderRadius: 8,
-          opacity: 0.6,
-          paddingHorizontal: 6,
-          paddingVertical: 4,
-          justifyContent: 'center',
-          zIndex: 5,
-        }}
-      >
-        <Text
-          style={{
-            fontSize: 10,
-            fontWeight: '600',
-            color: TASK_PASTEL.text,
-          }}
-          numberOfLines={2}
-        >
-          {task.title}
-        </Text>
-      </View>
-    );
-  },
 );
 
 // ============================================================
@@ -466,6 +422,7 @@ const TheGrid: React.FC = () => {
                   return dayCourses.map((course) => (
                     <View
                       key={course.id}
+                      pointerEvents="box-none"
                       style={{
                         position: 'absolute',
                         left: leftOffset,

@@ -244,8 +244,9 @@ const TapToCreateModal: React.FC = () => {
       </Animated.View>
 
       <KeyboardAvoidingView
-        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
         style={styles.avoidingView}
+        keyboardVerticalOffset={Platform.OS === 'ios' ? 0 : 20}
       >
         {/* 弹窗主体 */}
         <Animated.View style={[styles.modal, modalStyle]}>
@@ -323,10 +324,11 @@ const styles = StyleSheet.create({
   },
   avoidingView: {
     flex: 1,
-    justifyContent: 'center',
+    justifyContent: 'flex-end',
     alignItems: 'center',
     width: '100%',
     paddingHorizontal: 32,
+    paddingBottom: 48,
   },
   modal: {
     width: '100%',

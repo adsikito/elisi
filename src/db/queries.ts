@@ -467,6 +467,44 @@ export async function deleteTask(id: string): Promise<void> {
 }
 
 // ============================================================
+// 日期范围任务查询（软待办 — 课表网格用）
+// ============================================================
+
+/**
+ * 获取 due_date 落在 [startDate, endDate] 区间内的所有任务
+ *
+ * 利用 idx_tasks_due_date 部分索引（WHERE due_date IS NOT NULL）实现快速范围扫描。
+ * 字符串比较 YYYY-MM-DD 格式天然有序，等价于日期比较。
+ *
+ * @param startDate 起始日期 (YYYY-MM-DD)
+ * @param endDate   结束日期 (YYYY-MM-DD)
+ * @returns 匹配的任务列表，按 priority DESC, due_date ASC 排序
+ */
+export async function getTasksByDateRange(
+  startDate: string,
+  endDate: string,
+): Promise<TaskNodeRow[]> {
+  const db = await getDatabase();
+  try {
+    return await db.getAllAsync<TaskNodeRow>(
+      `SELECT * FROM task_nodes
+       WHERE due_date IS NOT NULL
+         AND due_date >= ?
+         AND due_date <= ?
+       ORDER BY priority DESC, due_date ASC`,
+      startDate,
+      endDate,
+    );
+  } catch (error) {
+    throw new DatabaseError(
+      `查询日期范围任务失败: [${startDate}, ${endDate}]`,
+      'getTasksByDateRange',
+      error,
+    );
+  }
+}
+
+// ============================================================
 // 统计查询
 // ============================================================
 
