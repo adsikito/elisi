@@ -5,8 +5,6 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import TaskItem from '@/components/tasks/TaskItem';
 import { useTaskStore, type FlatRow } from '@/store/taskStore';
 
-const EMPTY_HEIGHT = 200;
-
 const COLORS = {
   bg: '#F5F3FA',
   title: '#3D3D4E',
@@ -68,16 +66,26 @@ const TaskListScreen: React.FC = () => {
         data={flatData}
         renderItem={renderItem}
         keyExtractor={keyExtractor}
-        contentContainerStyle={styles.listContent}
+        style={styles.list}
+        contentContainerStyle={[
+          styles.listContent,
+          flatData.length === 0 ? styles.listContentEmpty : null,
+        ]}
         showsVerticalScrollIndicator={false}
         onDragEnd={({ data, from, to }) => {
           taskStore.reorderTasks(from, to, data);
         }}
         ListEmptyComponent={
           <View style={styles.empty}>
-            <Text style={styles.emptyIcon}>📋</Text>
-            <Text style={styles.emptyText}>暂无任务</Text>
-            <Text style={styles.emptySub}>点击右下角 + 创建第一个任务</Text>
+            <Text style={styles.emptyIcon}>🚀</Text>
+            <Text
+              style={styles.emptyText}
+              numberOfLines={1}
+              adjustsFontSizeToFit
+              minimumFontScale={0.78}
+            >
+              太棒了！今天没有任何任务。点击下方极速创建...
+            </Text>
           </View>
         }
       />
@@ -116,28 +124,33 @@ const styles = StyleSheet.create({
     fontSize: 13,
     color: COLORS.sub,
   },
+  list: {
+    flex: 1,
+  },
   listContent: {
     paddingHorizontal: 4,
     paddingBottom: 100,
   },
+  listContentEmpty: {
+    flexGrow: 1,
+  },
   empty: {
+    flex: 1,
     alignItems: 'center',
     justifyContent: 'center',
-    height: EMPTY_HEIGHT,
-    paddingTop: 40,
+    paddingHorizontal: 28,
+    paddingVertical: 48,
   },
   emptyIcon: {
-    fontSize: 40,
-    marginBottom: 12,
+    fontSize: 56,
+    marginBottom: 14,
   },
   emptyText: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: COLORS.title,
-  },
-  emptySub: {
     fontSize: 13,
+    fontWeight: '500',
     color: COLORS.sub,
-    marginTop: 6,
+    textAlign: 'center',
+    lineHeight: 20,
+    letterSpacing: 0,
   },
 });

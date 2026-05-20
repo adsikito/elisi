@@ -1,0 +1,13 @@
+{
+  "expo": {
+    "name": "MyBrain",
+    "slug": "mybrain",
+    "userInterfaceStyle": "light",
+    "ios": {
+      "bundleIdentifier": "com.yourname.mybrain"
+    },
+    "android": {
+      "package": "com.yourname.mybrain"
+    }
+  }
+}

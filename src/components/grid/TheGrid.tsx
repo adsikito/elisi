@@ -72,6 +72,23 @@ const styles = StyleSheet.create({
     fontSize: 13,
     fontWeight: '700',
   },
+  emptyWatermark: {
+    ...StyleSheet.absoluteFillObject,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 24,
+    zIndex: 0,
+  },
+  emptyWatermarkText: {
+    maxWidth: GRID_WIDTH - 32,
+    color: '#B79CC9',
+    fontSize: 14,
+    fontWeight: '600',
+    lineHeight: 22,
+    textAlign: 'center',
+    opacity: 0.42,
+    letterSpacing: 0,
+  },
 });
 
 const EMPTY_CELL_COLORS = [
@@ -295,6 +312,9 @@ const TheGrid: React.FC = () => {
     return grouped;
   }, [dayTasks]);
 
+  const isWeekEmpty =
+    courses.length === 0 && Object.values(dayTasks).every((items) => items.length === 0);
+
   const handleCoursePress = useCallback(
     (course: (typeof courses)[0]) => {
       openDetailModal({ type: 'course', item: course });
@@ -332,8 +352,7 @@ const TheGrid: React.FC = () => {
     } catch (error) {
       Alert.alert(
         '导入失败',
-        (error as { message?: string } | undefined)?.message ||
-          '识别过程中发生未知错误',
+        (error as { message?: string } | undefined)?.message || '识别过程中发生未知错误。',
       );
     }
   }, [isImporting]);
@@ -358,7 +377,7 @@ const TheGrid: React.FC = () => {
         >
           {isImporting ? <ActivityIndicator size="small" color="#7B4F9D" /> : null}
           <Text style={styles.importButtonText}>
-            {isImporting ? '🧠 视觉引擎解析中...' : '🖼️ 智能导入课表'}
+            {isImporting ? '视觉引擎解析中...' : '智能导入课表'}
           </Text>
         </Pressable>
       </View>
@@ -380,6 +399,14 @@ const TheGrid: React.FC = () => {
               <WeekdayHeader />
 
               <View style={{ position: 'relative', width: GRID_WIDTH, height: GRID_HEIGHT }}>
+                {isWeekEmpty ? (
+                  <View pointerEvents="none" style={styles.emptyWatermark}>
+                    <Text style={styles.emptyWatermarkText}>
+                      ☕ 享受本周的空白时光 / 或点击任意格子见缝插针
+                    </Text>
+                  </View>
+                ) : null}
+
                 {Array.from({ length: 7 }, (_, dayIndex) => dayIndex + 1).flatMap((day) =>
                   Array.from({ length: TOTAL_PERIODS }, (_, periodIndex) => {
                     const period = periodIndex + 1;

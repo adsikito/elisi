@@ -1,6 +1,8 @@
-import React, { useState } from 'react';
+import React, { useCallback, useState } from 'react';
 import {
+  ActivityIndicator,
   Alert,
+  Modal,
   Platform,
   Pressable,
   ScrollView,
@@ -10,7 +12,10 @@ import {
   View,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { injectMockData } from '@/db/mockData';
 import { useSettingsStore } from '@/store/settingsStore';
+import { useGridStore } from '@/store/gridStore';
+import { useTaskStore } from '@/store/taskStore';
 
 // ── 马卡龙色调 ──
 const COLORS = {
@@ -22,6 +27,9 @@ const COLORS = {
   accentLight: '#EDE8FD',
   border: '#ECECF0',
   borderFocus: '#C1B3F0',
+  warning: '#FF9F43',
+  warningLight: '#FFF3E6',
+  warningText: '#B85C00',
   danger: '#FF6B6B',
   dangerLight: '#FFF0F0',
   dangerText: '#D63031',
@@ -47,6 +55,7 @@ const SettingsScreen: React.FC = () => {
   const [dateFocused, setDateFocused] = useState(false);
   const [keyFocused, setKeyFocused] = useState(false);
   const [modelFocused, setModelFocused] = useState(false);
+  const [isInjectingMockData, setIsInjectingMockData] = useState(false);
 
   // ── 保存学期日期 ──
   const saveDate = () => {
@@ -83,7 +92,7 @@ const SettingsScreen: React.FC = () => {
             try {
               await clearAllData();
               // 同步本地编辑态
-              setDateText(semesterStartDate);
+              setDateText(useSettingsStore.getState().semesterStartDate);
               setApiKeyText('');
               setModelText('');
               Alert.alert('完成', '所有数据已清空');
@@ -96,8 +105,44 @@ const SettingsScreen: React.FC = () => {
     );
   };
 
+  const handleInjectMockData = useCallback(async () => {
+    if (isInjectingMockData) return;
+
+    setIsInjectingMockData(true);
+    try {
+      await injectMockData();
+      await useTaskStore.getState().loadRootTasks();
+      useGridStore.getState().forceRefreshGrid();
+      Alert.alert('完成', '已注入 100 课 / 300 任务压力测试数据');
+    } catch (error) {
+      console.error('[SettingsScreen] injectMockData failed:', error);
+      Alert.alert(
+        '错误',
+        error instanceof Error ? error.message : '注入压力测试数据失败，请重试',
+      );
+    } finally {
+      setIsInjectingMockData(false);
+    }
+  }, [isInjectingMockData]);
+
   return (
     <View style={[styles.screen, { paddingTop: insets.top }]}>
+      <Modal
+        transparent
+        animationType="fade"
+        visible={isInjectingMockData}
+        statusBarTranslucent
+        onRequestClose={() => {}}
+      >
+        <View style={styles.loadingOverlay}>
+          <View style={styles.loadingCard}>
+            <ActivityIndicator size="large" color={COLORS.warning} />
+            <Text style={styles.loadingTitle}>正在注入压力测试数据</Text>
+            <Text style={styles.loadingSubtext}>100 课 / 300 任务，请稍候。</Text>
+          </View>
+        </View>
+      </Modal>
+
       {/* 页头 */}
       <View style={styles.header}>
         <Text style={styles.headerTitle}>设置</Text>
@@ -178,6 +223,23 @@ const SettingsScreen: React.FC = () => {
         <View style={styles.dangerCard}>
           <Pressable
             style={({ pressed }) => [
+              styles.mockBtn,
+              pressed && !isInjectingMockData && styles.mockBtnPressed,
+              isInjectingMockData && styles.mockBtnDisabled,
+            ]}
+            onPress={handleInjectMockData}
+            disabled={isInjectingMockData}
+            accessibilityRole="button"
+            accessibilityState={{
+              busy: isInjectingMockData,
+              disabled: isInjectingMockData,
+            }}
+          >
+            <Text style={styles.mockBtnText}>💥 注入压力测试数据 (100课/300任务)</Text>
+          </Pressable>
+
+          <Pressable
+            style={({ pressed }) => [
               styles.dangerBtn,
               pressed && styles.dangerBtnPressed,
             ]}
@@ -211,7 +273,7 @@ const styles = StyleSheet.create({
     fontSize: 28,
     fontWeight: '800',
     color: COLORS.title,
-    letterSpacing: -0.5,
+    letterSpacing: 0,
   },
   scroll: {
     flex: 1,
@@ -289,6 +351,29 @@ const styles = StyleSheet.create({
     fontWeight: '700',
   },
 
+  // ── Stress inject button ──
+  mockBtn: {
+    backgroundColor: COLORS.warningLight,
+    borderRadius: 12,
+    borderWidth: 1.5,
+    borderColor: COLORS.warning,
+    paddingVertical: 14,
+    alignItems: 'center',
+    marginBottom: 12,
+  },
+  mockBtnPressed: {
+    opacity: 0.72,
+    transform: [{ scale: 0.98 }],
+  },
+  mockBtnDisabled: {
+    opacity: 0.6,
+  },
+  mockBtnText: {
+    color: COLORS.warningText,
+    fontSize: 15,
+    fontWeight: '700',
+  },
+
   // ── Danger zone ──
   dangerCard: {
     backgroundColor: COLORS.card,
@@ -322,5 +407,46 @@ const styles = StyleSheet.create({
     color: COLORS.dangerText,
     fontSize: 15,
     fontWeight: '700',
+  },
+  loadingOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(28, 22, 40, 0.38)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: 24,
+  },
+  loadingCard: {
+    width: '100%',
+    maxWidth: 280,
+    borderRadius: 18,
+    paddingVertical: 24,
+    paddingHorizontal: 20,
+    backgroundColor: COLORS.card,
+    alignItems: 'center',
+    ...Platform.select({
+      ios: {
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: 2 },
+        shadowOpacity: 0.08,
+        shadowRadius: 12,
+      },
+      android: {
+        elevation: 4,
+      },
+    }),
+  },
+  loadingTitle: {
+    marginTop: 14,
+    fontSize: 16,
+    fontWeight: '800',
+    color: COLORS.title,
+    textAlign: 'center',
+  },
+  loadingSubtext: {
+    marginTop: 6,
+    fontSize: 12,
+    color: COLORS.sub,
+    textAlign: 'center',
+    lineHeight: 18,
   },
 });
