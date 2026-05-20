@@ -25,11 +25,27 @@ import {
 // ============================================================
 
 /** 获取今日日期字符串 YYYY-MM-DD */
-function todayStr(): string {
-  const d = new Date();
+function formatDate(d: Date): string {
   const mm = String(d.getMonth() + 1).padStart(2, '0');
   const dd = String(d.getDate()).padStart(2, '0');
   return `${d.getFullYear()}-${mm}-${dd}`;
+}
+
+function getCurrentWeekMondayStr(): string {
+  const monday = new Date();
+  const day = monday.getDay(); // 0=Sun, 1=Mon, ..., 6=Sat
+  const offset = day === 0 ? -6 : 1 - day;
+  monday.setDate(monday.getDate() + offset);
+  return formatDate(monday);
+}
+
+function getInitialSemesterStartDate(): string {
+  const stored = getPreference('semester_start_date', '').trim();
+  if (stored) return stored;
+
+  const fallback = getCurrentWeekMondayStr();
+  setPreference('semester_start_date', fallback);
+  return fallback;
 }
 
 // ============================================================
@@ -56,8 +72,7 @@ interface SettingsState {
 // 从 MMKV 加载初始值（同步，模块顶层执行）
 // ============================================================
 
-const _today = todayStr();
-const _initialSemesterStartDate = getPreference('semester_start_date', _today);
+const _initialSemesterStartDate = getInitialSemesterStartDate();
 const _initialByokApiKey = getApiKey('claude_api_key') ?? '';
 const _initialByokModel = (storage.getString('byok_model') as string) ?? '';
 
@@ -111,7 +126,7 @@ export const useSettingsStore = create<SettingsState>((set) => ({
       clearAllStorage();
 
       // 3. 重置 Zustand state 为初始值
-      const resetDate = todayStr();
+      const resetDate = getCurrentWeekMondayStr();
       set({
         semesterStartDate: resetDate,
         byokApiKey: '',

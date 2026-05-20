@@ -7,7 +7,6 @@ import TaskItem from '@/components/tasks/TaskItem';
 
 const EMPTY_HEIGHT = 200;
 
-// ── 马卡龙色调 ──
 const COLORS = {
   bg: '#F5F3FA',
   title: '#3D3D4E',
@@ -51,7 +50,6 @@ const TaskListScreen: React.FC = () => {
 
   return (
     <View style={[styles.container, { paddingTop: insets.top }]}>
-      {/* 页面标题 */}
       <View style={styles.header}>
         <Text style={styles.headerTitle}>任务</Text>
         <Text style={styles.headerCount}>{flatList.length} 项</Text>
@@ -61,14 +59,13 @@ const TaskListScreen: React.FC = () => {
         data={flatList}
         renderItem={renderItem}
         keyExtractor={keyExtractor}
-        estimatedItemSize={62}
         contentContainerStyle={styles.listContent}
         showsVerticalScrollIndicator={false}
         ListEmptyComponent={
           <View style={styles.empty}>
             <Text style={styles.emptyIcon}>📋</Text>
             <Text style={styles.emptyText}>暂无任务</Text>
-            <Text style={styles.emptySub}>点击右下角 ＋ 创建第一个任务</Text>
+            <Text style={styles.emptySub}>点击右下角 + 创建第一个任务</Text>
           </View>
         }
       />

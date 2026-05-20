@@ -166,7 +166,7 @@ function getWeekDateRange(
 }
 
 function normalizeToMonday(dateStr: string): Date {
-  const d = new Date(dateStr + 'T00:00:00');
+  const d = parseDateStringLocal(dateStr);
   const dow = d.getDay(); // 0=Sun, 1=Mon, ..., 6=Sat
   const offset = dow === 0 ? -6 : 1 - dow;
   d.setDate(d.getDate() + offset);
@@ -182,7 +182,12 @@ function formatDate(d: Date): string {
 
 /** ISO 日期字符串 → dayOfWeek (1=周一, 7=周日) */
 function isoToDayOfWeek(isoDate: string): number {
-  const d = new Date(isoDate + 'T00:00:00');
+  const d = parseDateStringLocal(isoDate);
   const day = d.getDay(); // 0=Sun, 1=Mon, ..., 6=Sat
   return day === 0 ? 7 : day;
+}
+
+function parseDateStringLocal(dateStr: string): Date {
+  const [year, month, day] = dateStr.substring(0, 10).split('-').map(Number);
+  return new Date(year, month - 1, day);
 }

@@ -1,19 +1,18 @@
 import React, { useCallback, useRef } from 'react';
-import { ActivityIndicator, Pressable, StyleSheet, Text, View } from 'react-native';
+import { Pressable, StyleSheet, Text, View } from 'react-native';
 import Animated, {
   FadeIn,
+  interpolate,
   useAnimatedStyle,
   useSharedValue,
   withRepeat,
   withSequence,
   withSpring,
   withTiming,
-  interpolate,
 } from 'react-native-reanimated';
 import { Swipeable } from 'react-native-gesture-handler';
 import { useTaskStore, type FlatRow } from '@/store/taskStore';
 
-// ── 马卡龙低饱和度色板 ──
 const PALETTE = {
   card: '#FAFAFA',
   cardDone: '#F3F3F3',
@@ -21,14 +20,14 @@ const PALETTE = {
   textDone: '#B0B0BE',
   sub: '#9E9EB0',
   border: '#EBEBF0',
-  accent: '#C1B3F0',   // 薰衣草紫 —— checkbox 边框 / 选中色
-  accentDone: '#C1F0DB', // 薄荷绿 —— 已完成
+  accent: '#C1B3F0',
+  accentDone: '#C1F0DB',
   loading: '#E2C2F0',
-  priority0: '#C1F0DB', // 低 —— 薄荷绿
-  priority1: '#FFE0B2', // 中 —— 蜜桃橙
-  priority2: '#FFD6E0', // 高 —— 草莓粉
-  aiPurple: '#9B72CF',  // AI 拆解按钮色
-  aiGlow: '#D4B8F6',    // 呼吸灯高亮色
+  priority0: '#C1F0DB',
+  priority1: '#FFE0B2',
+  priority2: '#FFD6E0',
+  aiPurple: '#9B72CF',
+  aiGlow: '#D4B8F6',
 };
 
 const INDENT_UNIT = 24;
@@ -40,7 +39,6 @@ interface TaskItemProps {
   onToggleStatus: (id: string) => void;
 }
 
-// ── 呼吸灯效果：星云渐变 ──
 const AIBreathingDot: React.FC = () => {
   const progress = useSharedValue(0);
 
@@ -50,7 +48,7 @@ const AIBreathingDot: React.FC = () => {
         withTiming(1, { duration: 1200 }),
         withTiming(0, { duration: 1200 }),
       ),
-      -1, // 无限循环
+      -1,
       false,
     );
   }, [progress]);
@@ -92,13 +90,11 @@ const TaskItem: React.FC<TaskItemProps> = ({
   const decomposeTask = useTaskStore((s) => s.decomposeTask);
   const isDecomposing = useTaskStore((s) => !!s.loadingIds[row.id]);
 
-  // checkbox 动画
   const checkStyle = useAnimatedStyle(() => ({
     transform: [{ scale: checkScale.value }],
     opacity: checkScale.value,
   }));
 
-  // 箭头旋转动画
   const arrowStyle = useAnimatedStyle(() => ({
     transform: [{ rotate: `${arrowRotation.value}deg` }],
   }));
@@ -120,21 +116,15 @@ const TaskItem: React.FC<TaskItemProps> = ({
   }, [row.id, onToggleExpand, arrowRotation]);
 
   const handleDecompose = useCallback(async () => {
-    // 先收回 Swipeable
     swipeableRef.current?.close();
     await decomposeTask(row.id);
   }, [row.id, decomposeTask]);
 
-  // ── 左滑露出的 AI 拆解按钮 ──
   const renderRightActions = useCallback(
-    (
-      _progress: Animated.SharedValue<number>,
-      dragX: Animated.SharedValue<number>,
-    ) => {
-      // 拖拽距离 → 按钮缩放弹性
+    (_progress: any, dragX: any) => {
       const actionStyle = useAnimatedStyle(() => {
         const scale = interpolate(
-          dragX.value,
+          dragX?.value ?? 0,
           [-SWIPE_THRESHOLD, -40, 0],
           [1, 0.9, 0.6],
         );
@@ -186,10 +176,8 @@ const TaskItem: React.FC<TaskItemProps> = ({
           },
         ]}
       >
-        {/* 优先级色条 */}
         <View style={[styles.priorityBar, { backgroundColor: priorityColor }]} />
 
-        {/* Checkbox */}
         <Pressable
           onPress={handleToggleStatus}
           style={[
@@ -206,7 +194,6 @@ const TaskItem: React.FC<TaskItemProps> = ({
           </Animated.View>
         </Pressable>
 
-        {/* 标题 + 描述 */}
         <View style={styles.content}>
           <View style={styles.titleRow}>
             <Text
@@ -215,7 +202,6 @@ const TaskItem: React.FC<TaskItemProps> = ({
             >
               {row.title}
             </Text>
-            {/* AI 拆解呼吸灯 */}
             {isDecomposing && <AIBreathingDot />}
           </View>
           {row.description ? (
@@ -225,16 +211,13 @@ const TaskItem: React.FC<TaskItemProps> = ({
           ) : null}
         </View>
 
-        {/* 展开 / 折叠箭头 */}
         {row.hasChildren ? (
           <Pressable
             onPress={handleToggleExpand}
             hitSlop={10}
             style={styles.arrowBtn}
           >
-            <Animated.Text style={[styles.arrow, arrowStyle]}>
-              ▶
-            </Animated.Text>
+            <Animated.Text style={[styles.arrow, arrowStyle]}>▶</Animated.Text>
             {row.isLoading && (
               <View style={styles.loadingDot}>
                 <Text style={styles.loadingText}>…</Text>
@@ -261,7 +244,6 @@ const styles = StyleSheet.create({
     paddingVertical: 12,
     paddingHorizontal: 14,
     marginVertical: 3,
-    // 阴影
     elevation: 1,
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 1 },
@@ -338,7 +320,6 @@ const styles = StyleSheet.create({
     fontSize: 14,
     color: PALETTE.loading,
   },
-  // ── Swipeable 左滑动作区 ──
   swipeAction: {
     justifyContent: 'center',
     alignItems: 'flex-end',

@@ -1,98 +1,170 @@
 /**
- * MyBrain — BYOK AI 连接器
- *
- * BYOK = Bring Your Own Key，用户自带 API Key
- * 从 MMKV 加密存储读取 key，直连 LLM 服务商 API
- *
- * 支持的 Provider：
- *   - OpenAI (gpt-4o-mini)
- *   - Claude (claude-haiku-4-5-20251001)
- *
- * 所有方法返回结构化 JSON，由调用方负责类型断言
+ * BYOK AI connector for task breakdown and scheduling.
  */
 
-import { getApiKey, getPreference } from '@/store/mmkv';
+import { getApiKey } from '@/store/mmkv';
+import type {
+  ScheduledSubTask,
+  TaskBreakdownResult,
+} from './ByokConnector.types';
 
-// ============================================================
-// 类型定义
-// ============================================================
-
-/** AI 分解任务返回的子任务结构 */
-export interface SubTask {
-  title: string;
-  description?: string;
-  priority?: number;
-}
-
-/** streamTaskBreakdown 的返回结构 */
-export interface TaskBreakdownResult {
-  sub_tasks: SubTask[];
-}
-
-/** 支持的 AI 服务商 */
 type Provider = 'openai' | 'claude';
-
-// ============================================================
-// 常量
-// ============================================================
 
 const OPENAI_API_URL = 'https://api.openai.com/v1/chat/completions';
 const CLAUDE_API_URL = 'https://api.anthropic.com/v1/messages';
+const DEFAULT_DURATION_MINUTES = 45;
+const DEFAULT_OPENAI_MODEL = 'gpt-4o-mini';
+const DEFAULT_CLAUDE_MODEL = 'claude-haiku-4-5-20251001';
 
-const SYSTEM_PROMPT = `你是一个任务分解助手。用户会给你一个任务标题，你需要把它拆解为 2-5 个可执行的子任务。
+const SYSTEM_PROMPT = [
+  'You are a top-tier time management expert.',
+  'Break the task into 3-5 sub-tasks.',
+  'Use the provided "free slots map" to assign a suitable date and period to each sub-task.',
+  'Return JSON only, with this exact structure:',
+  '{"sub_tasks":[{"title":"task name","duration_minutes":45,"target_date":"YYYY-MM-DD","start_period":3}]}',
+  'If no suitable free slot exists for a sub-task, omit target_date and start_period so it degrades to a normal task.',
+  'Do not output markdown, commentary, or extra keys.',
+].join('\n');
 
-严格以 JSON 格式返回，不要包含任何其他文字：
-{
-  "sub_tasks": [
-    { "title": "子任务标题", "description": "简要说明", "priority": 1 }
-  ]
-}
-
-规则：
-- priority: 0=低, 1=中, 2=高
-- 子任务应按执行顺序排列
-- 每个子任务应该是独立可完成的最小单元`;
-
-// ============================================================
-// 内部工具
-// ============================================================
-
-/** 检测当前配置的 provider */
 function detectProvider(): Provider | null {
   if (getApiKey('claude_api_key')) return 'claude';
   if (getApiKey('openai_api_key')) return 'openai';
   return null;
 }
 
-/** 从 AI 响应中提取 JSON */
+function buildUserPrompt(parentTaskTitle: string, freeSlotsMap?: string): string {
+  const trimmedMap = freeSlotsMap?.trim();
+  if (!trimmedMap) {
+    return `Parent task: ${parentTaskTitle}`;
+  }
+
+  return [
+    `Parent task: ${parentTaskTitle}`,
+    '',
+    'This is the free slots map for the current week:',
+    trimmedMap,
+  ].join('\n');
+}
+
 function extractJSON(text: string): TaskBreakdownResult {
-  // 尝试直接解析
+  const parsed =
+    tryParseJSON(text) ??
+    tryParseCodeBlockJSON(text) ??
+    tryParseBraceJSON(text);
+
+  if (!parsed) {
+    throw new Error('AI response did not contain valid JSON.');
+  }
+
+  return normalizeTaskBreakdown(parsed);
+}
+
+function tryParseJSON(text: string): unknown | null {
   try {
     return JSON.parse(text);
   } catch {
-    // 尝试提取 ```json ... ``` 代码块
-    const match = text.match(/```(?:json)?\s*([\s\S]*?)```/);
-    if (match?.[1]) {
-      return JSON.parse(match[1].trim());
-    }
-    // 尝试提取第一个 { ... } 块
-    const braceMatch = text.match(/\{[\s\S]*\}/);
-    if (braceMatch) {
-      return JSON.parse(braceMatch[0]);
-    }
-    throw new Error('无法从 AI 响应中提取有效 JSON');
+    return null;
   }
 }
 
-// ============================================================
-// 核心 API
-// ============================================================
+function tryParseCodeBlockJSON(text: string): unknown | null {
+  const match = text.match(/```(?:json)?\s*([\s\S]*?)```/i);
+  if (!match?.[1]) return null;
+  return tryParseJSON(match[1].trim());
+}
 
-/**
- * 调用 OpenAI API 分解任务
- */
+function tryParseBraceJSON(text: string): unknown | null {
+  const match = text.match(/\{[\s\S]*\}/);
+  if (!match) return null;
+  return tryParseJSON(match[0]);
+}
+
+function normalizeTaskBreakdown(raw: unknown): TaskBreakdownResult {
+  if (!isRecord(raw)) {
+    throw new Error('AI response must be a JSON object.');
+  }
+
+  const subTasks = raw.sub_tasks;
+  if (!Array.isArray(subTasks)) {
+    throw new Error('AI response must include a sub_tasks array.');
+  }
+
+  return {
+    sub_tasks: subTasks
+      .map((item) => normalizeSubTask(item))
+      .filter((item): item is ScheduledSubTask => item !== null),
+  };
+}
+
+function normalizeSubTask(raw: unknown): ScheduledSubTask | null {
+  if (!isRecord(raw)) return null;
+
+  const title = typeof raw.title === 'string' ? raw.title.trim() : '';
+  if (!title) return null;
+
+  const duration = normalizeDuration(raw.duration_minutes) ?? DEFAULT_DURATION_MINUTES;
+  const subTask: ScheduledSubTask = {
+    title,
+    duration_minutes: duration,
+  };
+
+  const targetDate = normalizeDate(raw.target_date);
+  if (targetDate) {
+    subTask.target_date = targetDate;
+  }
+
+  const startPeriod = normalizePeriod(raw.start_period);
+  if (startPeriod !== null) {
+    subTask.start_period = startPeriod;
+  }
+
+  return subTask;
+}
+
+function normalizeDuration(value: unknown): number | null {
+  if (typeof value === 'number' && Number.isFinite(value) && value > 0) {
+    return Math.round(value);
+  }
+
+  if (typeof value === 'string' && value.trim()) {
+    const parsed = Number(value);
+    if (Number.isFinite(parsed) && parsed > 0) {
+      return Math.round(parsed);
+    }
+  }
+
+  return null;
+}
+
+function normalizeDate(value: unknown): string | null {
+  if (typeof value !== 'string') return null;
+  const trimmed = value.trim();
+  if (!trimmed) return null;
+  return /^\d{4}-\d{2}-\d{2}$/.test(trimmed) ? trimmed : null;
+}
+
+function normalizePeriod(value: unknown): number | null {
+  if (typeof value === 'number' && Number.isInteger(value) && value >= 1 && value <= 12) {
+    return value;
+  }
+
+  if (typeof value === 'string' && value.trim()) {
+    const parsed = Number(value);
+    if (Number.isInteger(parsed) && parsed >= 1 && parsed <= 12) {
+      return parsed;
+    }
+  }
+
+  return null;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null;
+}
+
 async function callOpenAI(
-  title: string,
+  parentTaskTitle: string,
+  freeSlotsMap: string | undefined,
   apiKey: string,
   baseUrl?: string,
 ): Promise<TaskBreakdownResult> {
@@ -107,10 +179,10 @@ async function callOpenAI(
       Authorization: `Bearer ${apiKey}`,
     },
     body: JSON.stringify({
-      model: 'gpt-4o-mini',
+      model: DEFAULT_OPENAI_MODEL,
       messages: [
         { role: 'system', content: SYSTEM_PROMPT },
-        { role: 'user', content: `请分解这个任务：${title}` },
+        { role: 'user', content: buildUserPrompt(parentTaskTitle, freeSlotsMap) },
       ],
       temperature: 0.3,
       response_format: { type: 'json_object' },
@@ -119,21 +191,21 @@ async function callOpenAI(
 
   if (!res.ok) {
     const err = await res.text();
-    throw new Error(`OpenAI API 错误 (${res.status}): ${err}`);
+    throw new Error(`OpenAI API error (${res.status}): ${err}`);
   }
 
   const data = await res.json();
   const content = data.choices?.[0]?.message?.content;
-  if (!content) throw new Error('OpenAI 返回空内容');
+  if (!content) {
+    throw new Error('OpenAI response did not include content.');
+  }
 
   return extractJSON(content);
 }
 
-/**
- * 调用 Claude API 分解任务
- */
 async function callClaude(
-  title: string,
+  parentTaskTitle: string,
+  freeSlotsMap: string | undefined,
   apiKey: string,
   baseUrl?: string,
 ): Promise<TaskBreakdownResult> {
@@ -149,11 +221,14 @@ async function callClaude(
       'anthropic-version': '2023-06-01',
     },
     body: JSON.stringify({
-      model: 'claude-haiku-4-5-20251001',
+      model: DEFAULT_CLAUDE_MODEL,
       max_tokens: 1024,
       system: SYSTEM_PROMPT,
       messages: [
-        { role: 'user', content: `请分解这个任务：${title}` },
+        {
+          role: 'user',
+          content: buildUserPrompt(parentTaskTitle, freeSlotsMap),
+        },
       ],
       temperature: 0.3,
     }),
@@ -161,60 +236,46 @@ async function callClaude(
 
   if (!res.ok) {
     const err = await res.text();
-    throw new Error(`Claude API 错误 (${res.status}): ${err}`);
+    throw new Error(`Claude API error (${res.status}): ${err}`);
   }
 
   const data = await res.json();
   const content = data.content?.[0]?.text;
-  if (!content) throw new Error('Claude 返回空内容');
+  if (!content) {
+    throw new Error('Claude response did not include content.');
+  }
 
   return extractJSON(content);
 }
 
-// ============================================================
-// 导出 API
-// ============================================================
-
-/**
- * 流式任务分解（名称保留 stream 前缀以兼容上层调用）
- *
- * 根据用户配置的 BYOK API Key 自动选择 provider，
- * 调用 LLM 将任务标题拆解为子任务列表。
- *
- * @param taskTitle 任务标题
- * @returns 结构化子任务列表
- * @throws 未配置 API Key 或调用失败时抛出错误
- */
 export async function streamTaskBreakdown(
-  taskTitle: string,
+  parentTaskTitle: string,
+  freeSlotsMap?: string,
 ): Promise<TaskBreakdownResult> {
   const provider = detectProvider();
 
   if (!provider) {
-    throw new Error(
-      '未配置 AI API Key，请在设置中添加 OpenAI 或 Claude 的 API Key',
-    );
+    throw new Error('No AI API key found. Configure either OpenAI or Claude.');
   }
 
-  const customBase = getPreference('custom_api_base' as any, '') as string;
+  const customBase = getApiKey('custom_api_base') ?? undefined;
 
   switch (provider) {
     case 'openai': {
       const key = getApiKey('openai_api_key');
-      if (!key) throw new Error('OpenAI API Key 无效');
-      return callOpenAI(taskTitle, key, customBase || undefined);
+      if (!key) throw new Error('OpenAI API key is missing.');
+      return callOpenAI(parentTaskTitle, freeSlotsMap, key, customBase);
     }
     case 'claude': {
       const key = getApiKey('claude_api_key');
-      if (!key) throw new Error('Claude API Key 无效');
-      return callClaude(taskTitle, key, customBase || undefined);
+      if (!key) throw new Error('Claude API key is missing.');
+      return callClaude(parentTaskTitle, freeSlotsMap, key, customBase);
     }
   }
 }
 
-/**
- * 检查是否已配置可用的 AI 服务
- */
 export function isAIConfigured(): boolean {
   return detectProvider() !== null;
 }
+
+export type { ScheduledSubTask, TaskBreakdownResult } from './ByokConnector.types';

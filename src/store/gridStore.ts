@@ -35,7 +35,8 @@ export interface TaskNodeExtended extends TaskNodeRow {
 export interface SlotContext {
   dayOfWeek: number;
   startPeriod: number;
-  dateStr: string; // ISO 日期字符串，用于绑定软待办
+  endPeriod: number;
+  dateStr?: string;
 }
 
 /** 详情弹窗选中项 — 硬日程或软待办 */
@@ -69,7 +70,7 @@ interface GridState {
   setCourses: (courses: CourseItem[]) => void;
   setDayTasks: (tasks: Record<number, TaskNodeExtended[]>) => void;
   forceRefreshGrid: () => void;
-  openCreateModal: (dayOfWeek: number, period: number, dateStr: string) => void;
+  openCreateModal: (dayOfWeek: number, period: number, dateStr?: string) => void;
   closeCreateModal: () => void;
   openDetailModal: (item: DetailItem) => void;
   closeDetailModal: () => void;
@@ -130,7 +131,12 @@ export const useGridStore = create<GridState>((set) => ({
   openCreateModal: (dayOfWeek, period, dateStr) =>
     set({
       isCreateModalOpen: true,
-      selectedSlotContext: { dayOfWeek, startPeriod: period, dateStr },
+      selectedSlotContext: {
+        dayOfWeek,
+        startPeriod: period,
+        endPeriod: period,
+        ...(dateStr ? { dateStr } : {}),
+      },
     }),
 
   closeCreateModal: () =>

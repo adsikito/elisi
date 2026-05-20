@@ -1,14 +1,16 @@
 import { create } from 'zustand';
+import type { ScheduledSubTask } from '@/ai/ByokConnector';
+import { streamTaskBreakdown } from '@/ai/ByokConnector';
 import type { TaskNodeRow } from '@/db';
 import {
-  getRootTasks,
-  getChildTasksWithCount,
   createTask,
+  getChildTasksWithCount,
+  getRootTasks,
   updateTaskStatus,
 } from '@/db';
-import { streamTaskBreakdown } from '@/ai/ByokConnector';
+import { useGridStore } from '@/store/gridStore';
+import { getPreference } from '@/store/mmkv';
 
-/** 扁平化行 —— 注入 FlashList 的数据单元 */
 export interface FlatRow {
   id: string;
   parent_id: string | null;
@@ -19,35 +21,24 @@ export interface FlatRow {
   due_date: string | null;
   created_at: string;
   updated_at: string;
-  /** 树深度，根节点 = 0 */
   depth: number;
-  /** 是否拥有子节点 */
   hasChildren: boolean;
-  /** 是否正在异步加载子节点 */
   isLoading: boolean;
 }
 
 interface TaskState {
-  /** 扁平化视图 —— FlashList 的 data */
   flatList: FlatRow[];
-  /** 当前展开的父节点 id 集合 */
   expandedIds: Set<string>;
-  /** 页面首次加载中 */
   isInitialLoading: boolean;
-  /** AI 拆解进行中的任务 id 集合 */
   loadingIds: Record<string, boolean>;
-
-  /** 加载根任务 */
   loadRootTasks: () => Promise<void>;
-  /** 切换展开 / 折叠 */
   toggleExpand: (id: string) => Promise<void>;
-  /** 切换任务完成状态 */
   toggleStatus: (id: string) => Promise<void>;
-  /** AI 拆解任务 */
   decomposeTask: (id: string) => Promise<void>;
 }
 
-/** 从 TaskNodeRow + child_count 构造 FlatRow */
+const WEEKDAY_LABELS = ['周一', '周二', '周三', '周四', '周五', '周六', '周日'] as const;
+
 function toFlatRow(
   task: TaskNodeRow & { child_count: number },
   depth: number,
@@ -68,20 +59,81 @@ function toFlatRow(
   };
 }
 
-/** 收集指定节点下所有展开的后代 id（深度优先，用于折叠时批量移除） */
-function collectDescendantIds(
-  list: FlatRow[],
-  parentId: string,
-): string[] {
+function collectDescendantIds(list: FlatRow[], parentId: string): string[] {
   const ids: string[] = [];
   const parentIdx = list.findIndex((r) => r.id === parentId);
   if (parentIdx === -1) return ids;
+
   const parentDepth = list[parentIdx].depth;
   for (let i = parentIdx + 1; i < list.length; i++) {
     if (list[i].depth <= parentDepth) break;
     ids.push(list[i].id);
   }
+
   return ids;
+}
+
+function getCurrentWeekMondayStr(): string {
+  const monday = new Date();
+  const day = monday.getDay();
+  const offset = day === 0 ? -6 : 1 - day;
+  monday.setDate(monday.getDate() + offset);
+  return formatDate(monday);
+}
+
+function parseDateStringLocal(dateStr: string): Date {
+  const [year, month, day] = dateStr.substring(0, 10).split('-').map(Number);
+  return new Date(year, month - 1, day);
+}
+
+function normalizeToMonday(dateStr: string): Date {
+  const date = parseDateStringLocal(dateStr);
+  const day = date.getDay();
+  const offset = day === 0 ? -6 : 1 - day;
+  date.setDate(date.getDate() + offset);
+  return date;
+}
+
+function formatDate(date: Date): string {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+}
+
+function generateFreeSlots(): string {
+  const currentWeek = useGridStore.getState().currentWeek;
+  const semesterStart =
+    getPreference('semester_start_date', '').trim() || getCurrentWeekMondayStr();
+  const monday = normalizeToMonday(semesterStart);
+  monday.setDate(monday.getDate() + (currentWeek - 1) * 7);
+
+  const labels = WEEKDAY_LABELS.map((label, index) => {
+    const date = new Date(monday);
+    date.setDate(monday.getDate() + index);
+    return `${formatDate(date)}(${label}) 第8-12节`;
+  });
+
+  return `可排期时间（第${currentWeek}周）: ${labels.join('；')}`;
+}
+
+function buildTaskDescription(subTask: ScheduledSubTask): string {
+  const parts: string[] = [];
+  const scheduleParts: string[] = [];
+
+  if (subTask.target_date) {
+    scheduleParts.push(subTask.target_date);
+  }
+  if (typeof subTask.start_period === 'number') {
+    scheduleParts.push(`第${subTask.start_period}节`);
+  }
+
+  if (scheduleParts.length > 0) {
+    parts.push(`⏰ ${scheduleParts.join(' ')}`);
+  }
+
+  parts.push(`${subTask.duration_minutes}min`);
+  return parts.join(' · ');
 }
 
 export const useTaskStore = create<TaskState>((set, get) => ({
@@ -106,7 +158,6 @@ export const useTaskStore = create<TaskState>((set, get) => ({
     const newExpanded = new Set(expandedIds);
 
     if (expandedIds.has(id)) {
-      // ── 折叠：移除所有后代行 ──
       newExpanded.delete(id);
       const descIds = collectDescendantIds(flatList, id);
       const removeSet = new Set(descIds);
@@ -117,12 +168,10 @@ export const useTaskStore = create<TaskState>((set, get) => ({
       return;
     }
 
-    // ── 展开：标记 loading → 异步拉取 → 插入 ──
     newExpanded.add(id);
     const idx = flatList.findIndex((r) => r.id === id);
     if (idx === -1) return;
 
-    // 显示 loading 指示器
     const withLoading = [...flatList];
     withLoading[idx] = { ...withLoading[idx], isLoading: true };
     set({ flatList: withLoading, expandedIds: newExpanded });
@@ -141,7 +190,6 @@ export const useTaskStore = create<TaskState>((set, get) => ({
       next.splice(i + 1, 0, ...childRows);
       set({ flatList: next });
     } catch {
-      // 出错时回滚 expanded 状态
       const rollback = new Set(get().expandedIds);
       rollback.delete(id);
       const latest = get().flatList;
@@ -164,7 +212,6 @@ export const useTaskStore = create<TaskState>((set, get) => ({
     const current = flatList[idx];
     const nextStatus = current.status === 'done' ? 'pending' : 'done';
 
-    // 乐观更新
     const next = [...flatList];
     next[idx] = { ...current, status: nextStatus };
     set({ flatList: next });
@@ -172,7 +219,6 @@ export const useTaskStore = create<TaskState>((set, get) => ({
     try {
       await updateTaskStatus(id, nextStatus);
     } catch {
-      // 回滚
       const rollback = [...get().flatList];
       const ri = rollback.findIndex((r) => r.id === id);
       if (ri !== -1) {
@@ -183,56 +229,67 @@ export const useTaskStore = create<TaskState>((set, get) => ({
   },
 
   decomposeTask: async (id: string) => {
-    const { flatList } = get();
+    const { flatList, loadingIds } = get();
+    if (loadingIds[id]) return;
+
     const idx = flatList.findIndex((r) => r.id === id);
     if (idx === -1) return;
 
     const taskTitle = flatList[idx].title;
+    const freeSlotsMap = generateFreeSlots();
 
-    // 标记 loading
     set((s) => ({ loadingIds: { ...s.loadingIds, [id]: true } }));
 
     try {
-      // 1. 调用 AI 分解任务
-      const result = await streamTaskBreakdown(taskTitle);
-      const subs = result.sub_tasks;
-      if (!subs || subs.length === 0) return;
+      const result = await streamTaskBreakdown(taskTitle, freeSlotsMap);
+      const subs = Array.isArray(result.sub_tasks) ? result.sub_tasks : [];
+      if (subs.length === 0) return;
 
-      // 2. 批量插入子任务到 SQLite
-      const parentDepth = flatList[idx].depth;
-      for (let i = 0; i < subs.length; i++) {
+      for (const rawSubTask of subs) {
+        const subTask = rawSubTask as ScheduledSubTask;
+        const title = subTask.title.trim();
+        if (!title) continue;
+
         await createTask({
           parent_id: id,
-          title: subs[i].title,
-          description: subs[i].description ?? null,
-          priority: subs[i].priority ?? 1,
+          title,
+          description: buildTaskDescription(subTask),
+          due_date: subTask.target_date ?? null,
+          priority: 1,
           status: 'pending',
         });
       }
 
-      // 3. 从 DB 重新拉取该节点的子任务（获得真实 id 和 child_count）
-      const children = await getChildTasksWithCount(id);
-      const childRows = children.map((t) => toFlatRow(t, parentDepth + 1));
+      useGridStore.getState().forceRefreshGrid();
 
-      // 4. 更新 flatList：标记父节点 hasChildren，插入子节点
       const latest = get().flatList;
-      const i = latest.findIndex((r) => r.id === id);
-      if (i === -1) return;
+      const parentIndex = latest.findIndex((r) => r.id === id);
+      if (parentIndex === -1) return;
 
-      const next = [...latest];
-      next[i] = { ...next[i], hasChildren: true, isLoading: false };
-      next.splice(i + 1, 0, ...childRows);
+      const removeSet = new Set(collectDescendantIds(latest, id));
+      const next = latest.filter((row) => !removeSet.has(row.id));
+      const refreshedParentIndex = next.findIndex((r) => r.id === id);
+      if (refreshedParentIndex === -1) return;
 
-      // 5. 自动展开该节点，清除 loading
+      const latestParent = next[refreshedParentIndex];
+      const children = await getChildTasksWithCount(id);
+      const childRows = children.map((t) => toFlatRow(t, latestParent.depth + 1));
+
+      next[refreshedParentIndex] = {
+        ...latestParent,
+        hasChildren: true,
+        isLoading: false,
+      };
+      next.splice(refreshedParentIndex + 1, 0, ...childRows);
+
       const newExpanded = new Set(get().expandedIds);
       newExpanded.add(id);
 
       set({ flatList: next, expandedIds: newExpanded });
     } catch (error) {
-      console.error(`[taskStore] AI 分解任务失败 (${id}):`, error);
+      console.error(`[taskStore] AI breakdown failed (${id}):`, error);
       throw error;
     } finally {
-      // 清除 loading
       set((s) => {
         const next = { ...s.loadingIds };
         delete next[id];
