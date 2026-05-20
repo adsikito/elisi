@@ -212,8 +212,7 @@ const TapToCreateModal: React.FC = () => {
       }
 
       // ═══ 刷新看板 ═══
-      const week = useGridStore.getState().currentWeek;
-      await useGridStore.getState().setCurrentWeek(week);
+      useGridStore.getState().forceRefreshGrid();
       await loadRootTasks();
 
       handleClose();

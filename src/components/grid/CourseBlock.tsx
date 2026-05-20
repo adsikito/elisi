@@ -27,12 +27,14 @@ interface CourseBlockProps {
   name: string;
   classroom: string;
   teacher: string;
+  dayOfWeek: number;
   startPeriod: number;
   endPeriod: number;
   colorIndex: number;
   rowHeight: number;
   headerHeight: number;
-  onPress?: (id: string) => void;
+  weekRange?: string;
+  onPress?: (e: import('react-native').GestureResponderEvent) => void;
 }
 
 const AnimatedPressable = Animated.createAnimatedComponent(Pressable);
@@ -42,11 +44,13 @@ const CourseBlock: React.FC<CourseBlockProps> = ({
   name,
   classroom,
   teacher,
+  dayOfWeek,
   startPeriod,
   endPeriod,
   colorIndex,
   rowHeight,
   headerHeight,
+  weekRange,
   onPress,
 }) => {
   const scale = useSharedValue(1);
@@ -93,7 +97,10 @@ const CourseBlock: React.FC<CourseBlockProps> = ({
       ]}
       onPressIn={handlePressIn}
       onPressOut={handlePressOut}
-      onPress={() => onPress?.(id)}
+      onPress={(e) => {
+        e.stopPropagation();
+        onPress?.(e);
+      }}
     >
       <Text
         style={{

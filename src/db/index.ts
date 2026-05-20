@@ -37,6 +37,7 @@ export {
   getAllCourses,
   getCourseById,
   deleteCourse,
+  deleteCourseSchedule,
   getSchedulesByWeek,
   getSchedulesByWeeks,
   createTask,

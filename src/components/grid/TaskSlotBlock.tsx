@@ -1,5 +1,5 @@
 import React from 'react';
-import { Text, View } from 'react-native';
+import { Pressable, Text, View } from 'react-native';
 import type { TaskNodeExtended } from '../../store/gridStore';
 
 const PASTEL = {
@@ -11,13 +11,19 @@ interface TaskSlotBlockProps {
   task: TaskNodeExtended;
   index: number;
   rowHeight: number;
+  onPress?: (e: import('react-native').GestureResponderEvent) => void;
 }
 
-const TaskSlotBlock: React.FC<TaskSlotBlockProps> = ({ task, index, rowHeight }) => {
-  const topOffset = index * rowHeight + 4;
+const TaskSlotBlock: React.FC<TaskSlotBlockProps> = ({ task, index, rowHeight, onPress }) => {
+  const period = task.startPeriod || 1;
+  const topOffset = (period - 1) * rowHeight + 4;
 
   return (
-    <View
+    <Pressable
+      onPress={(e) => {
+        e.stopPropagation();
+        onPress?.(e);
+      }}
       style={{
         position: 'absolute',
         top: topOffset,
@@ -42,7 +48,7 @@ const TaskSlotBlock: React.FC<TaskSlotBlockProps> = ({ task, index, rowHeight })
       >
         {task.title}
       </Text>
-    </View>
+    </Pressable>
   );
 };
 

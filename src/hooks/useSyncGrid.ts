@@ -29,6 +29,7 @@ const EMPTY_DAY_TASKS: GroupedTasks = {
  */
 export function useSyncGrid(): SyncState {
   const currentWeek = useGridStore((s) => s.currentWeek);
+  const refreshTick = useGridStore((s) => s.refreshTick);
   const setCourses = useGridStore((s) => s.setCourses);
   const setDayTasks = useGridStore((s) => s.setDayTasks);
 
@@ -83,7 +84,7 @@ export function useSyncGrid(): SyncState {
     return () => {
       cancelled = true;
     };
-  }, [currentWeek, setCourses, setDayTasks]);
+  }, [currentWeek, refreshTick, setCourses, setDayTasks]);
 
   return state;
 }
@@ -125,9 +126,14 @@ function groupTasksByDay(
     const taskDate = task.due_date.substring(0, 10);
     const dow = isoToDayOfWeek(taskDate);
 
+    // 从 description 中提取节次: "⏰ 第X节" → X
+    const periodMatch = task.description?.match(/第(\d+)节/);
+    const startPeriod = periodMatch ? parseInt(periodMatch[1], 10) : 1;
+
     result[dow].push({
       ...task,
       dateStr: taskDate,
+      startPeriod,
     });
   }
 

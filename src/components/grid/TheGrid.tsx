@@ -12,6 +12,7 @@ import { useSyncGrid } from '../../hooks/useSyncGrid';
 import CourseBlock from './CourseBlock';
 import TaskSlotBlock from './TaskSlotBlock';
 import TapToCreateModal from './TapToCreateModal';
+import ItemDetailModal from './ItemDetailModal';
 import type { TaskNodeExtended } from '../../store/gridStore';
 
 const WEEKDAYS = ['周一', '周二', '周三', '周四', '周五', '周六', '周日'];
@@ -285,6 +286,7 @@ const TheGrid: React.FC = () => {
   const dayTasks = useGridStore((s) => s.dayTasks);
   const currentWeek = useGridStore((s) => s.currentWeek);
   const openCreateModal = useGridStore((s) => s.openCreateModal);
+  const openDetailModal = useGridStore((s) => s.openDetailModal);
 
   // loading 时网格轻微淡出
   const loadingProgress = useSharedValue(0);
@@ -343,9 +345,19 @@ const TheGrid: React.FC = () => {
     [openCreateModal],
   );
 
-  const handleCoursePress = useCallback((_id: string) => {
-    // TODO: 打开课程详情 / 编辑
-  }, []);
+  const handleCoursePress = useCallback(
+    (course: (typeof courses)[0]) => {
+      openDetailModal({ type: 'course', item: course });
+    },
+    [openDetailModal],
+  );
+
+  const handleTaskPress = useCallback(
+    (task: TaskNodeExtended) => {
+      openDetailModal({ type: 'task', item: task });
+    },
+    [openDetailModal],
+  );
 
   const gridHeight = HEADER_HEIGHT + TOTAL_PERIODS * ROW_HEIGHT;
 
@@ -401,7 +413,7 @@ const TheGrid: React.FC = () => {
                         top: 0,
                         bottom: 0,
                       }}
-                      pointerEvents="none"
+                      pointerEvents="box-none"
                     >
                       {dayItems.map((task, idx) => (
                         <TaskSlotBlock
@@ -409,6 +421,7 @@ const TheGrid: React.FC = () => {
                           task={task}
                           index={idx}
                           rowHeight={ROW_HEIGHT}
+                          onPress={() => handleTaskPress(task)}
                         />
                       ))}
                     </View>
@@ -436,12 +449,14 @@ const TheGrid: React.FC = () => {
                         name={course.name}
                         classroom={course.classroom}
                         teacher={course.teacher}
+                        dayOfWeek={course.dayOfWeek}
                         startPeriod={course.startPeriod}
                         endPeriod={course.endPeriod}
                         colorIndex={course.colorIndex}
                         rowHeight={ROW_HEIGHT}
                         headerHeight={0}
-                        onPress={handleCoursePress}
+                        weekRange={course.weekRange}
+                        onPress={() => handleCoursePress(course)}
                       />
                     </View>
                   ));
@@ -454,6 +469,9 @@ const TheGrid: React.FC = () => {
 
       {/* 创建浮层 */}
       <TapToCreateModal />
+
+      {/* 详情浮层 */}
+      <ItemDetailModal />
     </View>
   );
 };

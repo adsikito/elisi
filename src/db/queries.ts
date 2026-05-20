@@ -160,6 +160,28 @@ export async function deleteCourse(id: string): Promise<void> {
   }
 }
 
+/**
+ * 删除单条课程时间安排
+ *
+ * 仅删除 course_schedules 表中的记录，不影响课程本身。
+ * 适用于编辑课程时移除某个特定时间段。
+ */
+export async function deleteCourseSchedule(scheduleId: string): Promise<void> {
+  const db = await getDatabase();
+  try {
+    await db.runAsync(
+      'DELETE FROM course_schedules WHERE id = ?',
+      scheduleId,
+    );
+  } catch (error) {
+    throw new DatabaseError(
+      `删除课程时间安排 ${scheduleId} 失败`,
+      'deleteCourseSchedule',
+      error,
+    );
+  }
+}
+
 // ============================================================
 // 课表查询（核心热路径）
 // ============================================================

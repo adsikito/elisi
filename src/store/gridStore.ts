@@ -27,6 +27,8 @@ export interface CourseItem {
 export interface TaskNodeExtended extends TaskNodeRow {
   /** 该任务在本周对应的绝对日期 (YYYY-MM-DD) */
   dateStr: string;
+  /** 从 description 中解析出的节次 (1-12)，用于定位渲染位置 */
+  startPeriod?: number;
 }
 
 /** 创建面板的点击上下文 */
@@ -35,6 +37,11 @@ export interface SlotContext {
   startPeriod: number;
   dateStr: string; // ISO 日期字符串，用于绑定软待办
 }
+
+/** 详情弹窗选中项 — 硬日程或软待办 */
+export type DetailItem =
+  | { type: 'course'; item: CourseItem }
+  | { type: 'task'; item: TaskNodeExtended };
 
 interface GridState {
   // ── 硬日程 ──
@@ -46,16 +53,26 @@ interface GridState {
   /** 按星期 1-7 分组的当前周任务缓存 */
   dayTasks: Record<number, TaskNodeExtended[]>;
 
+  // ── 强制刷新 ──
+  refreshTick: number;
+
   // ── 创建面板 ──
   isCreateModalOpen: boolean;
   selectedSlotContext: SlotContext | null;
+
+  // ── 详情弹窗 ──
+  isDetailModalOpen: boolean;
+  selectedDetailItem: DetailItem | null;
 
   // ── Actions ──
   setCurrentWeek: (week: number) => void;
   setCourses: (courses: CourseItem[]) => void;
   setDayTasks: (tasks: Record<number, TaskNodeExtended[]>) => void;
+  forceRefreshGrid: () => void;
   openCreateModal: (dayOfWeek: number, period: number, dateStr: string) => void;
   closeCreateModal: () => void;
+  openDetailModal: (item: DetailItem) => void;
+  closeDetailModal: () => void;
   addCourse: (course: CourseItem) => void;
   removeCourse: (id: string) => void;
 }
@@ -94,8 +111,11 @@ export const useGridStore = create<GridState>((set) => ({
   timeSlots: DEFAULT_TIME_SLOTS,
   courses: [],
   dayTasks: { ...EMPTY_DAY_TASKS },
+  refreshTick: 0,
   isCreateModalOpen: false,
   selectedSlotContext: null,
+  isDetailModalOpen: false,
+  selectedDetailItem: null,
 
   // ── Actions ──
   setCurrentWeek: (week: number) => set({ currentWeek: week }),
@@ -103,6 +123,8 @@ export const useGridStore = create<GridState>((set) => ({
   setCourses: (courses) => set({ courses }),
 
   setDayTasks: (tasks) => set({ dayTasks: tasks }),
+
+  forceRefreshGrid: () => set((state) => ({ refreshTick: state.refreshTick + 1 })),
 
   // ── 创建面板 ──
   openCreateModal: (dayOfWeek, period, dateStr) =>
@@ -115,6 +137,19 @@ export const useGridStore = create<GridState>((set) => ({
     set({
       isCreateModalOpen: false,
       selectedSlotContext: null,
+    }),
+
+  // ── 详情弹窗 ──
+  openDetailModal: (item) =>
+    set({
+      isDetailModalOpen: true,
+      selectedDetailItem: item,
+    }),
+
+  closeDetailModal: () =>
+    set({
+      isDetailModalOpen: false,
+      selectedDetailItem: null,
     }),
 
   addCourse: (course) =>
