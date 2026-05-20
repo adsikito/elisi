@@ -108,8 +108,6 @@ const EMPTY_DAY_TASKS: Record<number, TaskNodeExtended[]> = {
 
 const IMPORT_START_WEEK = 1;
 const IMPORT_END_WEEK = 16;
-const COURSE_COLOR_COUNT = 12;
-
 // ============================================================
 // Store
 // ============================================================
@@ -174,6 +172,17 @@ export const useGridStore = create<GridState>((set, get) => ({
     set((state) => ({ courses: state.courses.filter((c) => c.id !== id) })),
 
   importSchedule: async (base64Image) => {
+    const MACARON_COLORS = [
+      '#FFB3BA',
+      '#FFDFBA',
+      '#FFFFBA',
+      '#BAFFC9',
+      '#BAE1FF',
+      '#E8BAFF',
+      '#D4F0F0',
+      '#FFC4C4',
+    ];
+
     set({ isImporting: true });
 
     try {
@@ -184,9 +193,10 @@ export const useGridStore = create<GridState>((set, get) => ({
 
       for (let index = 0; index < data.courses.length; index += 1) {
         const course = data.courses[index];
+        const colorIndex = Math.floor(Math.random() * MACARON_COLORS.length);
         const courseId = await insertCourse({
           name: course.title,
-          color_index: index % COURSE_COLOR_COUNT,
+          color_index: colorIndex,
           classroom: course.location ?? '',
           teacher: course.teacher ?? '',
           start_week: IMPORT_START_WEEK,
@@ -207,7 +217,14 @@ export const useGridStore = create<GridState>((set, get) => ({
       set({ isImporting: false });
     } catch (error) {
       set({ isImporting: false });
-      throw error;
+
+      if (error instanceof Error && error.message.includes('API 密钥')) {
+        throw error;
+      }
+
+      throw error instanceof Error
+        ? error
+        : new Error(typeof error === 'string' ? error : '识别过程中发生未知错误');
     }
   },
 }));

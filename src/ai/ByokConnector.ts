@@ -2,7 +2,7 @@
  * BYOK AI connector for task breakdown and scheduling.
  */
 
-import { getApiKey, getPreference, secureStorage } from '@/store/mmkv';
+import { getApiKey, getPreference, type AppPreferences } from '@/store/mmkv';
 import type {
   ScheduledSubTask,
   TaskBreakdownResult,
@@ -214,12 +214,17 @@ async function callOpenAI(
 }
 
 export async function extractScheduleFromImage(base64Image: string): Promise<any> {
-  const apiKey = secureStorage.getString('byok_api_key')?.trim();
+  const apiKey = String(
+    getPreference('byok_api_key' as keyof AppPreferences, ''),
+  ).trim();
   if (!apiKey) {
-    throw new Error('BYOK API key is missing.');
+    throw new Error('请先在设置页配置 AI 密钥！');
   }
 
   const customModel = getPreference('byok_model', '').trim();
+  const imageUrl = base64Image.startsWith('data:image/')
+    ? base64Image
+    : `data:image/jpeg;base64,${base64Image}`;
 
   try {
     const res = await fetch(OPENAI_API_URL, {
@@ -244,7 +249,7 @@ export async function extractScheduleFromImage(base64Image: string): Promise<any
               {
                 type: 'image_url',
                 image_url: {
-                  url: `data:image/jpeg;base64,${base64Image}`,
+                  url: imageUrl,
                 },
               },
             ],

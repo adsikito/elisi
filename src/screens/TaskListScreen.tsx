@@ -1,9 +1,9 @@
 import React, { useCallback, useEffect } from 'react';
 import { ActivityIndicator, StyleSheet, Text, View } from 'react-native';
-import { FlashList } from '@shopify/flash-list';
+import DraggableFlatList, { RenderItemParams } from 'react-native-draggable-flatlist';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { useTaskStore, type FlatRow } from '@/store/taskStore';
 import TaskItem from '@/components/tasks/TaskItem';
+import { useTaskStore, type FlatRow } from '@/store/taskStore';
 
 const EMPTY_HEIGHT = 200;
 
@@ -14,10 +14,17 @@ const COLORS = {
   accent: '#C1B3F0',
 };
 
+const taskStore = {
+  reorderTasks: (from: number, to: number, data: FlatRow[]) => {
+    if (from === to) return;
+    useTaskStore.setState({ flatList: [...data] });
+  },
+};
+
 const TaskListScreen: React.FC = () => {
   const insets = useSafeAreaInsets();
 
-  const flatList = useTaskStore((s) => s.flatList);
+  const flatData = useTaskStore((s) => s.flatList);
   const isInitialLoading = useTaskStore((s) => s.isInitialLoading);
   const loadRootTasks = useTaskStore((s) => s.loadRootTasks);
   const toggleExpand = useTaskStore((s) => s.toggleExpand);
@@ -28,9 +35,11 @@ const TaskListScreen: React.FC = () => {
   }, [loadRootTasks]);
 
   const renderItem = useCallback(
-    ({ item }: { item: FlatRow }) => (
+    ({ item, drag, isActive }: RenderItemParams<FlatRow>) => (
       <TaskItem
         row={item}
+        drag={drag}
+        isActive={isActive}
         onToggleExpand={toggleExpand}
         onToggleStatus={toggleStatus}
       />
@@ -52,15 +61,18 @@ const TaskListScreen: React.FC = () => {
     <View style={[styles.container, { paddingTop: insets.top }]}>
       <View style={styles.header}>
         <Text style={styles.headerTitle}>任务</Text>
-        <Text style={styles.headerCount}>{flatList.length} 项</Text>
+        <Text style={styles.headerCount}>{flatData.length} 项</Text>
       </View>
 
-      <FlashList
-        data={flatList}
+      <DraggableFlatList
+        data={flatData}
         renderItem={renderItem}
         keyExtractor={keyExtractor}
         contentContainerStyle={styles.listContent}
         showsVerticalScrollIndicator={false}
+        onDragEnd={({ data, from, to }) => {
+          taskStore.reorderTasks(from, to, data);
+        }}
         ListEmptyComponent={
           <View style={styles.empty}>
             <Text style={styles.emptyIcon}>📋</Text>

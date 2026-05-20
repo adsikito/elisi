@@ -1,5 +1,6 @@
 import React, { useCallback, useRef } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
+import * as Haptics from 'expo-haptics';
 import Animated, {
   FadeIn,
   interpolate,
@@ -35,6 +36,8 @@ const SWIPE_THRESHOLD = 80;
 
 interface TaskItemProps {
   row: FlatRow;
+  drag: () => void;
+  isActive: boolean;
   onToggleExpand: (id: string) => void;
   onToggleStatus: (id: string) => void;
 }
@@ -80,6 +83,8 @@ const AIBreathingDot: React.FC = () => {
 
 const TaskItem: React.FC<TaskItemProps> = ({
   row,
+  drag,
+  isActive,
   onToggleExpand,
   onToggleStatus,
 }) => {
@@ -114,6 +119,10 @@ const TaskItem: React.FC<TaskItemProps> = ({
     });
     onToggleExpand(row.id);
   }, [row.id, onToggleExpand, arrowRotation]);
+
+  const handleStartDrag = useCallback(() => {
+    void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy).finally(drag);
+  }, [drag]);
 
   const handleDecompose = useCallback(async () => {
     swipeableRef.current?.close();
@@ -151,9 +160,9 @@ const TaskItem: React.FC<TaskItemProps> = ({
 
   const isDone = row.status === 'done';
   const priorityColor =
-    row.priority === 2
+    row.priority >= 2
       ? PALETTE.priority2
-      : row.priority === 1
+      : row.priority >= 1
         ? PALETTE.priority1
         : PALETTE.priority0;
 
@@ -170,6 +179,7 @@ const TaskItem: React.FC<TaskItemProps> = ({
         entering={FadeIn.duration(240).springify()}
         style={[
           styles.card,
+          isActive && styles.cardActive,
           {
             marginLeft: row.depth * INDENT_UNIT,
             backgroundColor: isDone ? PALETTE.cardDone : PALETTE.card,
@@ -177,6 +187,15 @@ const TaskItem: React.FC<TaskItemProps> = ({
         ]}
       >
         <View style={[styles.priorityBar, { backgroundColor: priorityColor }]} />
+
+        <Pressable
+          onLongPress={handleStartDrag}
+          delayLongPress={120}
+          hitSlop={10}
+          style={styles.dragHandle}
+        >
+          <Text style={styles.dragIcon}>≡</Text>
+        </Pressable>
 
         <Pressable
           onPress={handleToggleStatus}
@@ -250,11 +269,33 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.06,
     shadowRadius: 4,
   },
+  cardActive: {
+    elevation: 10,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 8 },
+    shadowOpacity: 0.12,
+    shadowRadius: 16,
+    transform: [{ scale: 1.02 }],
+    zIndex: 2,
+  },
   priorityBar: {
     width: 4,
     height: 28,
     borderRadius: 2,
     marginRight: 10,
+  },
+  dragHandle: {
+    width: 20,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginRight: 10,
+    paddingVertical: 4,
+  },
+  dragIcon: {
+    fontSize: 18,
+    lineHeight: 18,
+    color: PALETTE.sub,
+    fontWeight: '700',
   },
   checkbox: {
     width: 22,

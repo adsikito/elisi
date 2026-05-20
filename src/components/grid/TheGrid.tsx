@@ -2,6 +2,7 @@ import React, { useCallback, useMemo } from 'react';
 import * as FileSystem from 'expo-file-system/legacy';
 import * as ImagePicker from 'expo-image-picker';
 import {
+  Alert,
   ActivityIndicator,
   Dimensions,
   Pressable,
@@ -329,7 +330,11 @@ const TheGrid: React.FC = () => {
 
       await useGridStore.getState().importSchedule(base64);
     } catch (error) {
-      console.warn('Failed to import schedule image.', error);
+      Alert.alert(
+        '导入失败',
+        (error as { message?: string } | undefined)?.message ||
+          '识别过程中发生未知错误',
+      );
     }
   }, [isImporting]);
 

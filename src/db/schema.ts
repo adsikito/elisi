@@ -133,7 +133,7 @@ export interface TaskNodeRow {
   description: string | null;
   /** 任务状态 */
   status: TaskStatus;
-  /** 优先级 (0=低, 1=中, 2=高) */
+  /** 优先级（排序权重） */
   priority: number;
   /** 截止日期，ISO 8601 或 null */
   due_date: string | null;
@@ -153,7 +153,7 @@ export const CREATE_TABLE_TASK_NODES = `
     description  TEXT,
     status       TEXT NOT NULL DEFAULT 'pending'
                  CHECK(status IN ('pending', 'in_progress', 'done', 'cancelled')),
-    priority     INTEGER NOT NULL DEFAULT 1 CHECK(priority BETWEEN 0 AND 2),
+    priority     INTEGER NOT NULL DEFAULT 1,
     due_date     TEXT,
     created_at   TEXT NOT NULL DEFAULT (datetime('now')),
     updated_at   TEXT NOT NULL DEFAULT (datetime('now')),

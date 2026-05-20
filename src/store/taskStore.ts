@@ -8,6 +8,7 @@ import {
   getRootTasks,
   updateTaskStatus,
 } from '@/db';
+import { updateTaskPriority } from '../db/queries';
 import { getSchedulesByWeek } from '../db/queries';
 import { useGridStore } from '@/store/gridStore';
 
@@ -34,6 +35,11 @@ interface TaskState {
   loadRootTasks: () => Promise<void>;
   toggleExpand: (id: string) => Promise<void>;
   toggleStatus: (id: string) => Promise<void>;
+  reorderTasks: (
+    draggedTaskId: string,
+    targetIndex: number,
+    flatListData: FlatRow[],
+  ) => Promise<void>;
   decomposeTask: (id: string) => Promise<void>;
 }
 
@@ -71,6 +77,42 @@ function collectDescendantIds(list: FlatRow[], parentId: string): string[] {
   }
 
   return ids;
+}
+
+function findSiblingByParent(
+  list: FlatRow[],
+  startIndex: number,
+  step: -1 | 1,
+  parentId: string | null,
+  draggedTaskId: string,
+): FlatRow | null {
+  for (let i = startIndex; i >= 0 && i < list.length; i += step) {
+    const candidate = list[i];
+    if (candidate.id === draggedTaskId) continue;
+    if (candidate.parent_id === parentId) return candidate;
+  }
+
+  return null;
+}
+
+function resolveReorderPriority(
+  prevSibling: FlatRow | null,
+  nextSibling: FlatRow | null,
+  fallbackPriority: number,
+): number {
+  if (prevSibling && nextSibling) {
+    return (prevSibling.priority + nextSibling.priority) / 2;
+  }
+
+  if (nextSibling) {
+    return nextSibling.priority + 10;
+  }
+
+  if (prevSibling) {
+    return prevSibling.priority - 10;
+  }
+
+  return fallbackPriority;
 }
 
 function formatPeriodRange(start: number, end: number): string {
@@ -235,6 +277,57 @@ export const useTaskStore = create<TaskState>((set, get) => ({
         rollback[ri] = { ...rollback[ri], status: current.status };
         set({ flatList: rollback });
       }
+    }
+  },
+
+  reorderTasks: async (
+    draggedTaskId: string,
+    targetIndex: number,
+    flatListData: FlatRow[],
+  ) => {
+    const currentFlatList = get().flatList;
+    const movedIndex =
+      flatListData[targetIndex]?.id === draggedTaskId
+        ? targetIndex
+        : flatListData.findIndex((row) => row.id === draggedTaskId);
+
+    if (movedIndex === -1) return;
+
+    const movedRow = flatListData[movedIndex];
+    if (!movedRow) return;
+
+    const prevSibling = findSiblingByParent(
+      flatListData,
+      movedIndex - 1,
+      -1,
+      movedRow.parent_id,
+      draggedTaskId,
+    );
+    const nextSibling = findSiblingByParent(
+      flatListData,
+      movedIndex + 1,
+      1,
+      movedRow.parent_id,
+      draggedTaskId,
+    );
+
+    const newPriority = resolveReorderPriority(
+      prevSibling,
+      nextSibling,
+      movedRow.priority,
+    );
+
+    const optimisticList = flatListData.map((row, index) =>
+      index === movedIndex ? { ...row, priority: newPriority } : row,
+    );
+
+    set({ flatList: optimisticList });
+
+    try {
+      await updateTaskPriority(draggedTaskId, newPriority);
+    } catch (error) {
+      set({ flatList: currentFlatList });
+      console.error(`[taskStore] reorder failed (${draggedTaskId}):`, error);
     }
   },
 

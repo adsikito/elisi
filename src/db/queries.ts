@@ -549,6 +549,31 @@ export async function updateTaskStatus(
 }
 
 /**
+ * 更新任务优先级（排序权重）
+ */
+export async function updateTaskPriority(
+  id: string,
+  newPriority: number,
+): Promise<void> {
+  const db = await getDatabase();
+  try {
+    await db.runAsync(
+      `UPDATE task_nodes
+       SET priority = ?, updated_at = datetime('now')
+       WHERE id = ?`,
+      newPriority,
+      id,
+    );
+  } catch (error) {
+    throw new DatabaseError(
+      `更新任务 ${id} 优先级失败`,
+      'updateTaskPriority',
+      error,
+    );
+  }
+}
+
+/**
  * 删除任务（级联删除所有子任务）
  */
 export async function deleteTask(id: string): Promise<void> {
