@@ -41,6 +41,7 @@ export {
   getSchedulesByWeeks,
   createTask,
   getTasksByCourseId,
+  getTasksByDateRange,
   getRootTasks,
   getChildTasks,
   getChildTasksWithCount,
