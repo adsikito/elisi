@@ -1,4 +1,6 @@
 import { create } from 'zustand';
+import { extractScheduleFromImage } from '@/ai/ByokConnector';
+import { insertCourse, insertCourseSchedule } from '@/db/queries';
 import type { TaskNodeRow } from '@/db/schema';
 
 // ============================================================
@@ -56,6 +58,7 @@ interface GridState {
 
   // ── 强制刷新 ──
   refreshTick: number;
+  isImporting: boolean;
 
   // ── 创建面板 ──
   isCreateModalOpen: boolean;
@@ -76,6 +79,7 @@ interface GridState {
   closeDetailModal: () => void;
   addCourse: (course: CourseItem) => void;
   removeCourse: (id: string) => void;
+  importSchedule: (base64Image: string) => Promise<void>;
 }
 
 // ============================================================
@@ -102,17 +106,22 @@ const EMPTY_DAY_TASKS: Record<number, TaskNodeExtended[]> = {
   1: [], 2: [], 3: [], 4: [], 5: [], 6: [], 7: [],
 };
 
+const IMPORT_START_WEEK = 1;
+const IMPORT_END_WEEK = 16;
+const COURSE_COLOR_COUNT = 12;
+
 // ============================================================
 // Store
 // ============================================================
 
-export const useGridStore = create<GridState>((set) => ({
+export const useGridStore = create<GridState>((set, get) => ({
   // ── 初始状态 ──
   currentWeek: 1,
   timeSlots: DEFAULT_TIME_SLOTS,
   courses: [],
   dayTasks: { ...EMPTY_DAY_TASKS },
   refreshTick: 0,
+  isImporting: false,
   isCreateModalOpen: false,
   selectedSlotContext: null,
   isDetailModalOpen: false,
@@ -163,4 +172,42 @@ export const useGridStore = create<GridState>((set) => ({
 
   removeCourse: (id) =>
     set((state) => ({ courses: state.courses.filter((c) => c.id !== id) })),
+
+  importSchedule: async (base64Image) => {
+    set({ isImporting: true });
+
+    try {
+      const data = await extractScheduleFromImage(base64Image);
+      if (!Array.isArray(data?.courses)) {
+        throw new Error('AI schedule result must include a courses array.');
+      }
+
+      for (let index = 0; index < data.courses.length; index += 1) {
+        const course = data.courses[index];
+        const courseId = await insertCourse({
+          name: course.title,
+          color_index: index % COURSE_COLOR_COUNT,
+          classroom: course.location ?? '',
+          teacher: course.teacher ?? '',
+          start_week: IMPORT_START_WEEK,
+          end_week: IMPORT_END_WEEK,
+        });
+
+        await insertCourseSchedule({
+          course_id: courseId,
+          day_of_week: course.dayOfWeek,
+          start_period: course.startPeriod,
+          end_period: course.endPeriod,
+          start_week: IMPORT_START_WEEK,
+          end_week: IMPORT_END_WEEK,
+        });
+      }
+
+      get().forceRefreshGrid();
+      set({ isImporting: false });
+    } catch (error) {
+      set({ isImporting: false });
+      throw error;
+    }
+  },
 }));

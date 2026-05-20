@@ -2,7 +2,7 @@
  * BYOK AI connector for task breakdown and scheduling.
  */
 
-import { getApiKey, getPreference } from '@/store/mmkv';
+import { getApiKey, getPreference, secureStorage } from '@/store/mmkv';
 import type {
   ScheduledSubTask,
   TaskBreakdownResult,
@@ -14,7 +14,16 @@ const OPENAI_API_URL = 'https://api.openai.com/v1/chat/completions';
 const CLAUDE_API_URL = 'https://api.anthropic.com/v1/messages';
 const DEFAULT_DURATION_MINUTES = 45;
 const DEFAULT_OPENAI_MODEL = 'gpt-4o-mini';
+const DEFAULT_OPENAI_VISION_MODEL = 'gpt-4o';
 const DEFAULT_CLAUDE_MODEL = 'claude-haiku-4-5-20251001';
+
+interface OpenAIVisionResponse {
+  choices?: Array<{
+    message?: {
+      content?: string | null;
+    };
+  }>;
+}
 
 const SYSTEM_PROMPT = [
   'You are a top-tier time management expert.',
@@ -202,6 +211,75 @@ async function callOpenAI(
   }
 
   return extractJSON(content);
+}
+
+export async function extractScheduleFromImage(base64Image: string): Promise<any> {
+  const apiKey = secureStorage.getString('byok_api_key')?.trim();
+  if (!apiKey) {
+    throw new Error('BYOK API key is missing.');
+  }
+
+  const customModel = getPreference('byok_model', '').trim();
+
+  try {
+    const res = await fetch(OPENAI_API_URL, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${apiKey}`,
+      },
+      body: JSON.stringify({
+        model: customModel || DEFAULT_OPENAI_VISION_MODEL,
+        response_format: { type: 'json_object' },
+        messages: [
+          {
+            role: 'system',
+            content:
+              '你是一个极其精准的课表视觉解析器。请从用户提供的课表图片中提取所有课程。必须输出 JSON 格式：{"courses": [{"title": "课程名", "dayOfWeek": 1到7的数字, "startPeriod": 起始节次数字, "endPeriod": 结束节次数字, "location": "上课地点"}]}',
+          },
+          {
+            role: 'user',
+            content: [
+              { type: 'text', text: '请解析这张课表图片。' },
+              {
+                type: 'image_url',
+                image_url: {
+                  url: `data:image/jpeg;base64,${base64Image}`,
+                },
+              },
+            ],
+          },
+        ],
+      }),
+    });
+
+    if (!res.ok) {
+      const err = await res.text();
+      throw new Error(`OpenAI Vision API error (${res.status}): ${err}`);
+    }
+
+    const data = (await res.json()) as OpenAIVisionResponse;
+    const content = data.choices?.[0]?.message?.content;
+    if (!content) {
+      throw new Error('OpenAI Vision response did not include content.');
+    }
+
+    const parsed =
+      tryParseJSON(content) ??
+      tryParseCodeBlockJSON(content) ??
+      tryParseBraceJSON(content);
+
+    if (!parsed) {
+      throw new Error('OpenAI Vision response did not contain valid JSON.');
+    }
+
+    return parsed;
+  } catch (error) {
+    if (error instanceof Error) {
+      throw error;
+    }
+    throw new Error('Failed to extract schedule from image.');
+  }
 }
 
 async function callClaude(

@@ -33,6 +33,8 @@ export {
 // 查询方法
 export {
   DatabaseError,
+  insertCourse,
+  insertCourseSchedule,
   createCourseWithSchedules,
   getAllCourses,
   getCourseById,
@@ -52,6 +54,7 @@ export {
 } from './queries';
 export type {
   CreateCourseParams,
+  InsertCourseScheduleParams,
   CreateTaskParams,
   ScheduleSlot,
   CourseStats,

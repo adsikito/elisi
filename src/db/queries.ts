@@ -52,6 +52,78 @@ export interface CreateCourseParams {
   note?: string;
 }
 
+export interface InsertCourseScheduleParams {
+  course_id: string;
+  day_of_week: number;
+  start_period: number;
+  end_period: number;
+  start_week?: number;
+  end_week?: number;
+}
+
+export async function insertCourse(params: CreateCourseParams): Promise<string> {
+  const db = await getDatabase();
+  const courseId = generateId();
+  const now = new Date().toISOString();
+
+  try {
+    await db.runAsync(
+      `INSERT INTO courses (id, name, color_index, classroom, teacher, start_week, end_week, note, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      courseId,
+      params.name,
+      params.color_index,
+      params.classroom ?? '',
+      params.teacher ?? '',
+      params.start_week ?? 1,
+      params.end_week ?? 16,
+      params.note ?? null,
+      now,
+      now,
+    );
+  } catch (error) {
+    throw new DatabaseError(
+      `Insert course failed: ${error instanceof Error ? error.message : String(error)}`,
+      'insertCourse',
+      error,
+    );
+  }
+
+  return courseId;
+}
+
+export async function insertCourseSchedule(
+  params: InsertCourseScheduleParams,
+): Promise<string> {
+  const db = await getDatabase();
+  const scheduleId = generateId();
+  const weeksMask = buildWeekRangeMask(
+    params.start_week ?? 1,
+    params.end_week ?? 16,
+  );
+
+  try {
+    await db.runAsync(
+      `INSERT INTO course_schedules (id, course_id, day_of_week, start_period, end_period, weeks_mask)
+       VALUES (?, ?, ?, ?, ?, ?)`,
+      scheduleId,
+      params.course_id,
+      params.day_of_week,
+      params.start_period,
+      params.end_period,
+      weeksMask,
+    );
+  } catch (error) {
+    throw new DatabaseError(
+      `Insert course schedule failed: ${error instanceof Error ? error.message : String(error)}`,
+      'insertCourseSchedule',
+      error,
+    );
+  }
+
+  return scheduleId;
+}
+
 /**
  * 创建课程及其时间安排（事务性）
  *

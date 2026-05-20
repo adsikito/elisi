@@ -1,5 +1,8 @@
 import React, { useCallback, useMemo } from 'react';
+import * as FileSystem from 'expo-file-system/legacy';
+import * as ImagePicker from 'expo-image-picker';
 import {
+  ActivityIndicator,
   Dimensions,
   Pressable,
   ScrollView,
@@ -29,6 +32,46 @@ const SCREEN_WIDTH = Dimensions.get('window').width;
 const COL_WIDTH = (SCREEN_WIDTH - TIME_COL_WIDTH) / 7;
 const GRID_WIDTH = COL_WIDTH * 7;
 const GRID_HEIGHT = ROW_HEIGHT * TOTAL_PERIODS;
+
+const styles = StyleSheet.create({
+  importBar: {
+    alignItems: 'flex-end',
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    backgroundColor: '#FAFAFA',
+  },
+  importButton: {
+    minHeight: 38,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    paddingHorizontal: 14,
+    borderRadius: 19,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: 'rgba(123,79,157,0.28)',
+    backgroundColor: '#FFFFFF',
+    shadowColor: '#7B4F9D',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.12,
+    shadowRadius: 10,
+    elevation: 3,
+  },
+  importButtonPressed: {
+    opacity: 0.82,
+    transform: [{ scale: 0.98 }],
+  },
+  importButtonDisabled: {
+    backgroundColor: '#F8F2FB',
+    borderColor: 'rgba(123,79,157,0.18)',
+    opacity: 0.88,
+  },
+  importButtonText: {
+    color: '#7B4F9D',
+    fontSize: 13,
+    fontWeight: '700',
+  },
+});
 
 const EMPTY_CELL_COLORS = [
   '#FFF5F7',
@@ -212,6 +255,7 @@ const TheGrid: React.FC = () => {
   const courses = useGridStore((s) => s.courses);
   const dayTasks = useGridStore((s) => s.dayTasks);
   const openDetailModal = useGridStore((s) => s.openDetailModal);
+  const isImporting = useGridStore((s) => s.isImporting);
 
   const loadingProgress = useSharedValue(0);
 
@@ -264,13 +308,60 @@ const TheGrid: React.FC = () => {
     [openDetailModal],
   );
 
+  const handleImportPress = useCallback(async () => {
+    if (isImporting) return;
+
+    try {
+      const result = await ImagePicker.launchImageLibraryAsync({
+        mediaTypes: ImagePicker.MediaTypeOptions.Images,
+        allowsEditing: true,
+        quality: 0.8,
+      });
+
+      if (result.canceled) return;
+
+      const uri = result.assets[0]?.uri;
+      if (!uri) return;
+
+      const base64 = await FileSystem.readAsStringAsync(uri, {
+        encoding: FileSystem.EncodingType.Base64,
+      });
+
+      await useGridStore.getState().importSchedule(base64);
+    } catch (error) {
+      console.warn('Failed to import schedule image.', error);
+    }
+  }, [isImporting]);
+
   const gridHeight = HEADER_HEIGHT + GRID_HEIGHT;
 
   return (
     <View style={{ flex: 1, backgroundColor: '#FAFAFA' }}>
       <WeekSwitcher />
 
-      <Animated.View style={[{ flex: 1 }, gridAnimatedStyle]}>
+      <View style={styles.importBar}>
+        <Pressable
+          accessibilityRole="button"
+          accessibilityState={{ disabled: isImporting, busy: isImporting }}
+          disabled={isImporting}
+          onPress={handleImportPress}
+          style={({ pressed }) => [
+            styles.importButton,
+            pressed && !isImporting ? styles.importButtonPressed : null,
+            isImporting ? styles.importButtonDisabled : null,
+          ]}
+        >
+          {isImporting ? <ActivityIndicator size="small" color="#7B4F9D" /> : null}
+          <Text style={styles.importButtonText}>
+            {isImporting ? '🧠 视觉引擎解析中...' : '🖼️ 智能导入课表'}
+          </Text>
+        </Pressable>
+      </View>
+
+      <Animated.View
+        pointerEvents={isImporting ? 'none' : 'auto'}
+        style={[{ flex: 1 }, gridAnimatedStyle]}
+      >
         <ScrollView
           style={{ flex: 1 }}
           contentContainerStyle={{ minHeight: gridHeight + 80 }}
