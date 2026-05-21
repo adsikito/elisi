@@ -41,6 +41,15 @@ export default function RootLayout() {
             }}
           />
           <Tabs.Screen
+            name="copilot"
+            options={{
+              title: '助手',
+              tabBarIcon: ({ color, size }) => (
+                <Ionicons name="sparkles-outline" size={size} color={color} />
+              ),
+            }}
+          />
+          <Tabs.Screen
             name="settings"
             options={{
               title: '设置',

@@ -2,6 +2,7 @@ import React, { useCallback, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
+  Linking,
   Modal,
   Platform,
   Pressable,
@@ -43,6 +44,7 @@ const SettingsScreen: React.FC = () => {
   const semesterStartDate = useSettingsStore((s) => s.semesterStartDate);
   const byokApiKey = useSettingsStore((s) => s.byokApiKey);
   const byokModel = useSettingsStore((s) => s.byokModel);
+  const byokBaseUrl = useSettingsStore((s) => s.byokBaseUrl);
   const updateSettings = useSettingsStore((s) => s.updateSettings);
   const clearAllData = useSettingsStore((s) => s.clearAllData);
 
@@ -50,11 +52,13 @@ const SettingsScreen: React.FC = () => {
   const [dateText, setDateText] = useState(semesterStartDate);
   const [apiKeyText, setApiKeyText] = useState(byokApiKey);
   const [modelText, setModelText] = useState(byokModel);
+  const [baseUrlText, setBaseUrlText] = useState(byokBaseUrl);
 
   // ── Focus 状态（边框高亮） ──
   const [dateFocused, setDateFocused] = useState(false);
   const [keyFocused, setKeyFocused] = useState(false);
   const [modelFocused, setModelFocused] = useState(false);
+  const [baseUrlFocused, setBaseUrlFocused] = useState(false);
   const [isInjectingMockData, setIsInjectingMockData] = useState(false);
 
   // ── 保存学期日期 ──
@@ -74,9 +78,16 @@ const SettingsScreen: React.FC = () => {
     updateSettings({
       byokApiKey: apiKeyText.trim(),
       byokModel: modelText.trim(),
+      byokBaseUrl: baseUrlText.trim(),
     });
     Alert.alert('已保存', 'AI 引擎配置已更新');
   };
+
+  const openApiKeyUrl = useCallback(() => {
+    Linking.openURL('https://platform.openai.com/api-keys').catch(() => {
+      Alert.alert('打开失败', '请稍后重试');
+    });
+  }, []);
 
   // ── 清空所有数据 ──
   const handleClear = () => {
@@ -95,6 +106,7 @@ const SettingsScreen: React.FC = () => {
               setDateText(useSettingsStore.getState().semesterStartDate);
               setApiKeyText('');
               setModelText('');
+              setBaseUrlText(useSettingsStore.getState().byokBaseUrl);
               Alert.alert('完成', '所有数据已清空');
             } catch {
               Alert.alert('错误', '清空数据时出错，请重试');
@@ -196,6 +208,30 @@ const SettingsScreen: React.FC = () => {
             onFocus={() => setKeyFocused(true)}
             onBlur={() => setKeyFocused(false)}
           />
+
+          <Text style={[styles.fieldLabel, { marginTop: 16 }]}>API 代理 Base URL</Text>
+          <TextInput
+            style={[
+              styles.input,
+              baseUrlFocused && styles.inputFocused,
+            ]}
+            value={baseUrlText}
+            onChangeText={setBaseUrlText}
+            placeholder="https://api.openai.com"
+            placeholderTextColor={COLORS.placeholder}
+            autoCapitalize="none"
+            autoCorrect={false}
+            keyboardType="url"
+            onFocus={() => setBaseUrlFocused(true)}
+            onBlur={() => setBaseUrlFocused(false)}
+          />
+          <Text
+            style={styles.apiKeyLink}
+            onPress={openApiKeyUrl}
+            accessibilityRole="link"
+          >
+            没有 API 密钥？点击获取密钥申请地址
+          </Text>
 
           <Text style={[styles.fieldLabel, { marginTop: 16 }]}>模型</Text>
           <TextInput
@@ -334,6 +370,12 @@ const styles = StyleSheet.create({
   inputFocused: {
     borderColor: COLORS.borderFocus,
     backgroundColor: COLORS.accentLight,
+  },
+  apiKeyLink: {
+    marginTop: 8,
+    fontSize: 12,
+    color: COLORS.accent,
+    lineHeight: 18,
   },
 
   // ── Save button ──

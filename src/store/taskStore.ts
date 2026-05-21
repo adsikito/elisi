@@ -1,9 +1,9 @@
 import { create } from 'zustand';
 import type { ScheduledSubTask } from '@/ai/ByokConnector';
 import { streamTaskBreakdown } from '@/ai/ByokConnector';
-import type { TaskNodeRow } from '@/db';
+import type { CreateTaskParams, TaskNodeRow } from '@/db';
 import {
-  createTask,
+  createTask as createDbTask,
   getChildTasksWithCount,
   getRootTasks,
   updateTaskStatus,
@@ -35,6 +35,7 @@ interface TaskState {
   loadRootTasks: () => Promise<void>;
   toggleExpand: (id: string) => Promise<void>;
   toggleStatus: (id: string) => Promise<void>;
+  createTask: (params: CreateTaskParams) => Promise<string>;
   reorderTasks: (
     draggedTaskId: string,
     targetIndex: number,
@@ -280,6 +281,16 @@ export const useTaskStore = create<TaskState>((set, get) => ({
     }
   },
 
+  createTask: async (params) => {
+    const taskId = await createDbTask(params);
+    const roots = await getRootTasks();
+    set({
+      flatList: roots.map((t) => toFlatRow(t, 0)),
+      isInitialLoading: false,
+    });
+    return taskId;
+  },
+
   reorderTasks: async (
     draggedTaskId: string,
     targetIndex: number,
@@ -354,7 +365,7 @@ export const useTaskStore = create<TaskState>((set, get) => ({
         const title = subTask.title.trim();
         if (!title) continue;
 
-        await createTask({
+        await createDbTask({
           parent_id: id,
           title,
           description: buildTaskDescription(subTask),

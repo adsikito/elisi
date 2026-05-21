@@ -1,9 +1,10 @@
-import React, { memo, useCallback, useEffect, useMemo } from 'react';
+import React, { memo, useCallback, useEffect, useMemo, useRef } from 'react';
 import { InteractionManager, Pressable, StyleSheet, Text, View } from 'react-native';
 import * as Haptics from 'expo-haptics';
 import Animated, {
   Extrapolation,
   interpolate,
+  runOnJS,
   useAnimatedStyle,
   useSharedValue,
   withRepeat,
@@ -55,7 +56,7 @@ interface TaskItemProps {
   drag: () => void;
   isActive: boolean;
   onToggleExpand: (id: string) => void;
-  onToggleStatus: (id: string) => void;
+  onToggleStatus: (id: string) => void | Promise<void>;
 }
 
 const AIBreathingDot: React.FC = () => {
@@ -96,6 +97,7 @@ const TaskItem: React.FC<TaskItemProps> = ({
   const checkScale = useSharedValue(row.status === 'done' ? 1 : 0);
   const arrowRotation = useSharedValue(0);
   const activeProgress = useSharedValue(isActive ? 1 : 0);
+  const isStatusCommitPendingRef = useRef(false);
 
   const decomposeTask = useTaskStore((s) => s.decomposeTask);
   const isDecomposing = useTaskStore((s) => !!s.loadingIds[row.id]);
@@ -189,13 +191,33 @@ const TaskItem: React.FC<TaskItemProps> = ({
     [gestureStartX, isActive, translateX],
   );
 
+  const resetStatusCommit = useCallback(() => {
+    isStatusCommitPendingRef.current = false;
+  }, []);
+
+  const commitToggleStatus = useCallback(
+    (id: string) => {
+      InteractionManager.runAfterInteractions(() => {
+        void Promise.resolve(onToggleStatus(id)).finally(resetStatusCommit);
+      });
+    },
+    [onToggleStatus, resetStatusCommit],
+  );
+
   const handleToggleStatus = useCallback(() => {
+    if (isStatusCommitPendingRef.current) return;
+
+    isStatusCommitPendingRef.current = true;
     const nextDone = !isDone;
-    checkScale.value = withSpring(nextDone ? 1 : 0, CHECK_SPRING);
-    InteractionManager.runAfterInteractions(() => {
-      onToggleStatus(row.id);
+    checkScale.value = withSpring(nextDone ? 1 : 0, CHECK_SPRING, (finished) => {
+      if (finished) {
+        runOnJS(commitToggleStatus)(row.id);
+        return;
+      }
+
+      runOnJS(resetStatusCommit)();
     });
-  }, [checkScale, isDone, onToggleStatus, row.id]);
+  }, [checkScale, commitToggleStatus, isDone, resetStatusCommit, row.id]);
 
   const handleToggleExpand = useCallback(() => {
     const nextRotation = arrowRotation.value === 0 ? 90 : 0;

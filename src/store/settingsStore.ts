@@ -15,8 +15,6 @@ import {
   storage,
   getPreference,
   setPreference,
-  getApiKey,
-  setApiKey,
   clearAllStorage,
 } from './mmkv';
 
@@ -48,6 +46,8 @@ function getInitialSemesterStartDate(): string {
   return fallback;
 }
 
+const DEFAULT_BYOK_BASE_URL = 'https://api.openai.com';
+
 // ============================================================
 // 类型
 // ============================================================
@@ -60,10 +60,12 @@ interface SettingsState {
   byokApiKey: string;
   /** BYOK 模型标识 (e.g. "claude-sonnet-4-20250514") */
   byokModel: string;
+  /** BYOK API Base URL */
+  byokBaseUrl: string;
 
   // ── Actions ──
   /** 批量更新设置（自动同步写入 MMKV） */
-  updateSettings: (partial: Partial<Pick<SettingsState, 'semesterStartDate' | 'byokApiKey' | 'byokModel'>>) => void;
+  updateSettings: (partial: Partial<Pick<SettingsState, 'semesterStartDate' | 'byokApiKey' | 'byokModel' | 'byokBaseUrl'>>) => void;
   /** 清空所有数据（SQLite 全表 + MMKV 全量 + Store 状态重置） */
   clearAllData: () => Promise<void>;
 }
@@ -73,8 +75,11 @@ interface SettingsState {
 // ============================================================
 
 const _initialSemesterStartDate = getInitialSemesterStartDate();
-const _initialByokApiKey = getApiKey('claude_api_key') ?? '';
+const _initialByokApiKey = (storage.getString('byok_api_key') as string) ?? '';
 const _initialByokModel = (storage.getString('byok_model') as string) ?? '';
+const _initialByokBaseUrl =
+  ((storage.getString('byok_base_url') as string | undefined) ?? DEFAULT_BYOK_BASE_URL).trim() ||
+  DEFAULT_BYOK_BASE_URL;
 
 // ============================================================
 // Store
@@ -85,6 +90,7 @@ export const useSettingsStore = create<SettingsState>((set) => ({
   semesterStartDate: _initialSemesterStartDate,
   byokApiKey: _initialByokApiKey,
   byokModel: _initialByokModel,
+  byokBaseUrl: _initialByokBaseUrl,
 
   // ── 更新设置 ──
   updateSettings: (partial) => {
@@ -97,13 +103,24 @@ export const useSettingsStore = create<SettingsState>((set) => ({
       }
 
       if (partial.byokApiKey !== undefined) {
-        next.byokApiKey = partial.byokApiKey;
-        setApiKey('claude_api_key', partial.byokApiKey);
+        const trimmedApiKey = partial.byokApiKey.trim();
+        next.byokApiKey = trimmedApiKey;
+        if (trimmedApiKey) {
+          storage.set('byok_api_key', trimmedApiKey);
+        } else {
+          storage.delete('byok_api_key');
+        }
       }
 
       if (partial.byokModel !== undefined) {
         next.byokModel = partial.byokModel;
         storage.set('byok_model', partial.byokModel);
+      }
+
+      if (partial.byokBaseUrl !== undefined) {
+        const trimmedBaseUrl = partial.byokBaseUrl.trim() || DEFAULT_BYOK_BASE_URL;
+        next.byokBaseUrl = trimmedBaseUrl;
+        storage.set('byok_base_url', trimmedBaseUrl);
       }
 
       return next;
@@ -131,10 +148,12 @@ export const useSettingsStore = create<SettingsState>((set) => ({
         semesterStartDate: resetDate,
         byokApiKey: '',
         byokModel: '',
+        byokBaseUrl: DEFAULT_BYOK_BASE_URL,
       });
 
       // 4. 将重置后的默认值写回 MMKV（避免下次加载读到空值）
       setPreference('semester_start_date', resetDate);
+      storage.set('byok_base_url', DEFAULT_BYOK_BASE_URL);
     } catch (error) {
       console.error('[settingsStore] clearAllData 失败:', error);
       throw error;

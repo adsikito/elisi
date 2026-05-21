@@ -2,7 +2,8 @@
  * BYOK AI connector for task breakdown and scheduling.
  */
 
-import { getApiKey, getPreference, type AppPreferences } from '@/store/mmkv';
+import { getApiKey, getPreference, storage } from '@/store/mmkv';
+import { useSettingsStore } from '@/store/settingsStore';
 import type {
   ScheduledSubTask,
   TaskBreakdownResult,
@@ -10,8 +11,10 @@ import type {
 
 type Provider = 'openai' | 'claude';
 
-const OPENAI_API_URL = 'https://api.openai.com/v1/chat/completions';
-const CLAUDE_API_URL = 'https://api.anthropic.com/v1/messages';
+const OPENAI_API_BASE_URL = 'https://api.openai.com';
+const CLAUDE_API_BASE_URL = 'https://api.anthropic.com';
+const OPENAI_API_URL = `${OPENAI_API_BASE_URL}/v1/chat/completions`;
+const CLAUDE_API_URL = `${CLAUDE_API_BASE_URL}/v1/messages`;
 const DEFAULT_DURATION_MINUTES = 45;
 const DEFAULT_OPENAI_MODEL = 'gpt-4o-mini';
 const DEFAULT_OPENAI_VISION_MODEL = 'gpt-4o';
@@ -36,9 +39,65 @@ const SYSTEM_PROMPT = [
 ].join('\n');
 
 function detectProvider(): Provider | null {
-  if (getApiKey('claude_api_key')) return 'claude';
-  if (getApiKey('openai_api_key')) return 'openai';
+  if (getOpenAICompatibleApiKey()) return 'openai';
+  if (getClaudeApiKey()) return 'claude';
   return null;
+}
+
+function getTrimmedValue(value: string | null | undefined): string | null {
+  const trimmed = value?.trim();
+  return trimmed ? trimmed : null;
+}
+
+function normalizeApiBaseUrl(baseUrl: string | null | undefined): string | undefined {
+  const trimmed = baseUrl?.trim().replace(/^['"]+|['"]+$/g, '');
+  if (!trimmed) return undefined;
+
+  const normalized = trimmed
+    .replace(/\/+$/g, '')
+    .replace(/\/v1\/(?:chat\/completions|messages)$/i, '')
+    .replace(/\/v1$/i, '');
+
+  return normalized || undefined;
+}
+
+function getOpenAICompatibleApiKey(): string | null {
+  return (
+    getTrimmedValue(storage.getString('byok_api_key')) ??
+    getTrimmedValue(getApiKey('openai_api_key'))
+  );
+}
+
+function getClaudeApiKey(): string | null {
+  return getTrimmedValue(getApiKey('claude_api_key'));
+}
+
+function getConfiguredApiBaseUrl(): string | undefined {
+  return normalizeApiBaseUrl(
+    getApiKey('custom_api_base') ??
+      useSettingsStore.getState().byokBaseUrl ??
+      storage.getString('byok_base_url'),
+  );
+}
+
+function getProviderApiBaseUrl(provider: Provider): string | undefined {
+  const baseUrl = getConfiguredApiBaseUrl();
+  if (provider === 'claude' && baseUrl === OPENAI_API_BASE_URL) {
+    return undefined;
+  }
+  return baseUrl;
+}
+
+function buildOpenAIChatCompletionsUrl(baseUrl?: string): string {
+  const normalizedBaseUrl = normalizeApiBaseUrl(baseUrl);
+  return normalizedBaseUrl
+    ? `${normalizedBaseUrl}/v1/chat/completions`
+    : OPENAI_API_URL;
+}
+
+function buildClaudeMessagesUrl(baseUrl?: string): string {
+  const normalizedBaseUrl = normalizeApiBaseUrl(baseUrl);
+  return normalizedBaseUrl ? `${normalizedBaseUrl}/v1/messages` : CLAUDE_API_URL;
 }
 
 function buildUserPrompt(parentTaskTitle: string, freeSlotsMap?: string): string {
@@ -178,9 +237,7 @@ async function callOpenAI(
   baseUrl?: string,
 ): Promise<TaskBreakdownResult> {
   const customModel = getPreference('byok_model', '').trim();
-  const url = baseUrl
-    ? `${baseUrl.replace(/\/$/, '')}/v1/chat/completions`
-    : OPENAI_API_URL;
+  const url = buildOpenAIChatCompletionsUrl(baseUrl);
 
   const res = await fetch(url, {
     method: 'POST',
@@ -214,20 +271,22 @@ async function callOpenAI(
 }
 
 export async function extractScheduleFromImage(base64Image: string): Promise<any> {
-  const apiKey = String(
-    getPreference('byok_api_key' as keyof AppPreferences, ''),
-  ).trim();
+  const apiKey = storage.getString('byok_api_key')?.trim();
   if (!apiKey) {
     throw new Error('请先在设置页配置 AI 密钥！');
   }
 
+  const baseUrl = useSettingsStore.getState().byokBaseUrl?.trim();
+  const url = baseUrl
+    ? `${baseUrl.replace(/\/$/, '')}/v1/chat/completions`
+    : OPENAI_API_URL;
   const customModel = getPreference('byok_model', '').trim();
   const imageUrl = base64Image.startsWith('data:image/')
     ? base64Image
     : `data:image/jpeg;base64,${base64Image}`;
 
   try {
-    const res = await fetch(OPENAI_API_URL, {
+    const res = await fetch(url, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -294,9 +353,7 @@ async function callClaude(
   baseUrl?: string,
 ): Promise<TaskBreakdownResult> {
   const customModel = getPreference('byok_model', '').trim();
-  const url = baseUrl
-    ? `${baseUrl.replace(/\/$/, '')}/v1/messages`
-    : CLAUDE_API_URL;
+  const url = buildClaudeMessagesUrl(baseUrl);
 
   const res = await fetch(url, {
     method: 'POST',
@@ -343,16 +400,16 @@ export async function streamTaskBreakdown(
     throw new Error('No AI API key found. Configure either OpenAI or Claude.');
   }
 
-  const customBase = getApiKey('custom_api_base') ?? undefined;
+  const customBase = getProviderApiBaseUrl(provider);
 
   switch (provider) {
     case 'openai': {
-      const key = getApiKey('openai_api_key');
+      const key = getOpenAICompatibleApiKey();
       if (!key) throw new Error('OpenAI API key is missing.');
       return callOpenAI(parentTaskTitle, freeSlotsMap, key, customBase);
     }
     case 'claude': {
-      const key = getApiKey('claude_api_key');
+      const key = getClaudeApiKey();
       if (!key) throw new Error('Claude API key is missing.');
       return callClaude(parentTaskTitle, freeSlotsMap, key, customBase);
     }
