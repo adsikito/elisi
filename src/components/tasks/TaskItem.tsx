@@ -98,6 +98,7 @@ const TaskItem: React.FC<TaskItemProps> = ({
   const arrowRotation = useSharedValue(0);
   const activeProgress = useSharedValue(isActive ? 1 : 0);
   const isStatusCommitPendingRef = useRef(false);
+  const isDecomposeCommitPendingRef = useRef(false);
 
   const decomposeTask = useTaskStore((s) => s.decomposeTask);
   const isDecomposing = useTaskStore((s) => !!s.loadingIds[row.id]);
@@ -168,7 +169,7 @@ const TaskItem: React.FC<TaskItemProps> = ({
     () =>
       Gesture.Pan()
         .enabled(!isActive)
-        .activeOffsetX([-14, 14])
+        .activeOffsetX([-20, 20])
         .failOffsetY([-10, 10])
         .onBegin(() => {
           gestureStartX.value = translateX.value;
@@ -230,10 +231,32 @@ const TaskItem: React.FC<TaskItemProps> = ({
     drag();
   }, [drag]);
 
+  const resetDecomposeCommit = useCallback(() => {
+    isDecomposeCommitPendingRef.current = false;
+  }, []);
+
+  const commitDecomposeTask = useCallback(
+    (id: string) => {
+      InteractionManager.runAfterInteractions(() => {
+        void Promise.resolve(decomposeTask(id)).finally(resetDecomposeCommit);
+      });
+    },
+    [decomposeTask, resetDecomposeCommit],
+  );
+
   const handleDecompose = useCallback(() => {
-    translateX.value = withSpring(0, CARD_SPRING);
-    void decomposeTask(row.id);
-  }, [decomposeTask, row.id, translateX]);
+    if (isDecomposeCommitPendingRef.current || isDecomposing) return;
+
+    isDecomposeCommitPendingRef.current = true;
+    translateX.value = withSpring(0, CARD_SPRING, (finished) => {
+      if (finished) {
+        runOnJS(commitDecomposeTask)(row.id);
+        return;
+      }
+
+      runOnJS(resetDecomposeCommit)();
+    });
+  }, [commitDecomposeTask, isDecomposing, resetDecomposeCommit, row.id, translateX]);
 
   const priorityColor =
     row.priority >= 2

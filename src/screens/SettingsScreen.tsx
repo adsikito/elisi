@@ -14,7 +14,13 @@ import {
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { injectMockData } from '@/db/mockData';
-import { useSettingsStore } from '@/store/settingsStore';
+import {
+  DEFAULT_BYOK_BASE_URL,
+  DEEPSEEK_BYOK_BASE_URL,
+  DEEPSEEK_BYOK_MODEL,
+  type ByokProvider,
+  useSettingsStore,
+} from '@/store/settingsStore';
 import { useGridStore } from '@/store/gridStore';
 import { useTaskStore } from '@/store/taskStore';
 
@@ -38,6 +44,13 @@ const COLORS = {
   placeholder: '#C4C4CE',
 };
 
+const PROVIDER_OPTIONS: Array<{ label: string; value: ByokProvider }> = [
+  { label: 'OpenAI', value: 'openai' },
+  { label: 'Claude', value: 'claude' },
+  { label: 'DeepSeek', value: 'deepseek' },
+  { label: '自定义', value: 'custom' },
+];
+
 const SettingsScreen: React.FC = () => {
   const insets = useSafeAreaInsets();
 
@@ -45,6 +58,7 @@ const SettingsScreen: React.FC = () => {
   const byokApiKey = useSettingsStore((s) => s.byokApiKey);
   const byokModel = useSettingsStore((s) => s.byokModel);
   const byokBaseUrl = useSettingsStore((s) => s.byokBaseUrl);
+  const byokProvider = useSettingsStore((s) => s.byokProvider);
   const updateSettings = useSettingsStore((s) => s.updateSettings);
   const clearAllData = useSettingsStore((s) => s.clearAllData);
 
@@ -53,6 +67,7 @@ const SettingsScreen: React.FC = () => {
   const [apiKeyText, setApiKeyText] = useState(byokApiKey);
   const [modelText, setModelText] = useState(byokModel);
   const [baseUrlText, setBaseUrlText] = useState(byokBaseUrl);
+  const [providerText, setProviderText] = useState<ByokProvider>(byokProvider);
 
   // ── Focus 状态（边框高亮） ──
   const [dateFocused, setDateFocused] = useState(false);
@@ -79,15 +94,39 @@ const SettingsScreen: React.FC = () => {
       byokApiKey: apiKeyText.trim(),
       byokModel: modelText.trim(),
       byokBaseUrl: baseUrlText.trim(),
+      byokProvider: providerText,
     });
     Alert.alert('已保存', 'AI 引擎配置已更新');
   };
 
+  const selectProvider = (provider: ByokProvider) => {
+    setProviderText(provider);
+    if (provider === 'deepseek') {
+      setBaseUrlText(DEEPSEEK_BYOK_BASE_URL);
+      setModelText(DEEPSEEK_BYOK_MODEL);
+    }
+    if (provider === 'openai' && baseUrlText.trim() === DEEPSEEK_BYOK_BASE_URL) {
+      setBaseUrlText(DEFAULT_BYOK_BASE_URL);
+    }
+  };
+
   const openApiKeyUrl = useCallback(() => {
-    Linking.openURL('https://platform.openai.com/api-keys').catch(() => {
+    const url =
+      providerText === 'deepseek'
+        ? 'https://platform.deepseek.com/'
+        : 'https://platform.openai.com/api-keys';
+
+    Linking.openURL(url).catch(() => {
       Alert.alert('打开失败', '请稍后重试');
     });
-  }, []);
+  }, [providerText]);
+
+  const apiKeyLinkText =
+    providerText === 'deepseek'
+      ? '(https://platform.deepseek.com/)'
+      : providerText === 'openai'
+        ? '点击这里去 OpenAI 官网申请'
+        : '';
 
   // ── 清空所有数据 ──
   const handleClear = () => {
@@ -107,6 +146,7 @@ const SettingsScreen: React.FC = () => {
               setApiKeyText('');
               setModelText('');
               setBaseUrlText(useSettingsStore.getState().byokBaseUrl);
+              setProviderText(useSettingsStore.getState().byokProvider);
               Alert.alert('完成', '所有数据已清空');
             } catch {
               Alert.alert('错误', '清空数据时出错，请重试');
@@ -192,6 +232,32 @@ const SettingsScreen: React.FC = () => {
         {/* ── AI 引擎配置 ── */}
         <Text style={styles.sectionLabel}>AI 引擎配置 (BYOK)</Text>
         <View style={styles.card}>
+          <Text style={styles.fieldLabel}>API 服务商</Text>
+          <View style={styles.segmented}>
+            {PROVIDER_OPTIONS.map((option) => {
+              const selected = providerText === option.value;
+              return (
+                <Pressable
+                  key={option.value}
+                  style={[
+                    styles.segmentItem,
+                    selected && styles.segmentItemSelected,
+                  ]}
+                  onPress={() => selectProvider(option.value)}
+                >
+                  <Text
+                    style={[
+                      styles.segmentText,
+                      selected && styles.segmentTextSelected,
+                    ]}
+                  >
+                    {option.label}
+                  </Text>
+                </Pressable>
+              );
+            })}
+          </View>
+
           <Text style={styles.fieldLabel}>API Key</Text>
           <TextInput
             style={[
@@ -208,6 +274,15 @@ const SettingsScreen: React.FC = () => {
             onFocus={() => setKeyFocused(true)}
             onBlur={() => setKeyFocused(false)}
           />
+          {apiKeyLinkText ? (
+            <Text
+              style={styles.apiKeyLink}
+              onPress={openApiKeyUrl}
+              accessibilityRole="link"
+            >
+              {apiKeyLinkText}
+            </Text>
+          ) : null}
 
           <Text style={[styles.fieldLabel, { marginTop: 16 }]}>API 代理 Base URL</Text>
           <TextInput
@@ -225,13 +300,6 @@ const SettingsScreen: React.FC = () => {
             onFocus={() => setBaseUrlFocused(true)}
             onBlur={() => setBaseUrlFocused(false)}
           />
-          <Text
-            style={styles.apiKeyLink}
-            onPress={openApiKeyUrl}
-            accessibilityRole="link"
-          >
-            没有 API 密钥？点击获取密钥申请地址
-          </Text>
 
           <Text style={[styles.fieldLabel, { marginTop: 16 }]}>模型</Text>
           <TextInput
@@ -356,6 +424,34 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     color: COLORS.title,
     marginBottom: 8,
+  },
+  segmented: {
+    flexDirection: 'row',
+    backgroundColor: COLORS.bg,
+    borderRadius: 12,
+    borderWidth: 1.5,
+    borderColor: COLORS.border,
+    padding: 3,
+    marginBottom: 16,
+  },
+  segmentItem: {
+    flex: 1,
+    minHeight: 36,
+    borderRadius: 9,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 6,
+  },
+  segmentItemSelected: {
+    backgroundColor: COLORS.accent,
+  },
+  segmentText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: COLORS.sub,
+  },
+  segmentTextSelected: {
+    color: '#FFFFFF',
   },
   input: {
     backgroundColor: COLORS.bg,

@@ -1,32 +1,45 @@
 /**
- * BYOK AI connector for task breakdown and scheduling.
+ * BYOK AI connector for task breakdown and timetable image extraction.
  */
 
-import { getApiKey, getPreference, storage } from '@/store/mmkv';
-import { useSettingsStore } from '@/store/settingsStore';
+import { getApiKey, storage } from '@/store/mmkv';
+import {
+  DEFAULT_BYOK_BASE_URL,
+  DEFAULT_BYOK_PROVIDER,
+  DEEPSEEK_BYOK_BASE_URL,
+  DEEPSEEK_BYOK_MODEL,
+  type ByokProvider,
+  useSettingsStore,
+} from '@/store/settingsStore';
 import type {
   ScheduledSubTask,
   TaskBreakdownResult,
 } from './ByokConnector.types';
 
-type Provider = 'openai' | 'claude';
-
-const OPENAI_API_BASE_URL = 'https://api.openai.com';
+const DEFAULT_URL = 'https://api.openai.com/v1/chat/completions';
+const DEFAULT_CLAUDE_URL = 'https://api.anthropic.com/v1/messages';
 const CLAUDE_API_BASE_URL = 'https://api.anthropic.com';
-const OPENAI_API_URL = `${OPENAI_API_BASE_URL}/v1/chat/completions`;
-const CLAUDE_API_URL = `${CLAUDE_API_BASE_URL}/v1/messages`;
 const DEFAULT_DURATION_MINUTES = 45;
 const DEFAULT_OPENAI_MODEL = 'gpt-4o-mini';
 const DEFAULT_OPENAI_VISION_MODEL = 'gpt-4o';
 const DEFAULT_CLAUDE_MODEL = 'claude-haiku-4-5-20251001';
 
-interface OpenAIVisionResponse {
+interface OpenAICompatibleResponse {
   choices?: Array<{
     message?: {
       content?: string | null;
     };
   }>;
 }
+
+interface ClaudeResponse {
+  content?: Array<{
+    type?: string;
+    text?: string | null;
+  }>;
+}
+
+type ModelPurpose = 'text' | 'vision';
 
 const SYSTEM_PROMPT = [
   'You are a top-tier time management expert.',
@@ -38,66 +51,146 @@ const SYSTEM_PROMPT = [
   'Do not output markdown, commentary, or extra keys.',
 ].join('\n');
 
-function detectProvider(): Provider | null {
-  if (getOpenAICompatibleApiKey()) return 'openai';
-  if (getClaudeApiKey()) return 'claude';
-  return null;
-}
+const SCHEDULE_SYSTEM_PROMPT = [
+  'You are a precise timetable vision parser.',
+  'Extract all courses from the supplied timetable image.',
+  'Return JSON only, with this exact structure:',
+  '{"courses":[{"title":"course name","dayOfWeek":1,"startPeriod":1,"endPeriod":2,"location":"classroom"}]}',
+  'dayOfWeek must be 1 for Monday through 7 for Sunday.',
+  'startPeriod and endPeriod must be numbers.',
+].join('\n');
 
 function getTrimmedValue(value: string | null | undefined): string | null {
   const trimmed = value?.trim();
   return trimmed ? trimmed : null;
 }
 
-function normalizeApiBaseUrl(baseUrl: string | null | undefined): string | undefined {
-  const trimmed = baseUrl?.trim().replace(/^['"]+|['"]+$/g, '');
-  if (!trimmed) return undefined;
-
-  const normalized = trimmed
-    .replace(/\/+$/g, '')
-    .replace(/\/v1\/(?:chat\/completions|messages)$/i, '')
-    .replace(/\/v1$/i, '');
-
-  return normalized || undefined;
+function normalizeProvider(value: string | null | undefined): ByokProvider {
+  return value === 'openai' ||
+    value === 'claude' ||
+    value === 'deepseek' ||
+    value === 'custom'
+    ? value
+    : DEFAULT_BYOK_PROVIDER;
 }
 
-function getOpenAICompatibleApiKey(): string | null {
-  return (
-    getTrimmedValue(storage.getString('byok_api_key')) ??
-    getTrimmedValue(getApiKey('openai_api_key'))
+function getConfiguredProvider(): ByokProvider {
+  return normalizeProvider(
+    storage.getString('byok_provider') ?? useSettingsStore.getState().byokProvider,
   );
 }
 
-function getClaudeApiKey(): string | null {
-  return getTrimmedValue(getApiKey('claude_api_key'));
-}
-
-function getConfiguredApiBaseUrl(): string | undefined {
-  return normalizeApiBaseUrl(
-    getApiKey('custom_api_base') ??
-      useSettingsStore.getState().byokBaseUrl ??
-      storage.getString('byok_base_url'),
-  );
-}
-
-function getProviderApiBaseUrl(provider: Provider): string | undefined {
-  const baseUrl = getConfiguredApiBaseUrl();
-  if (provider === 'claude' && baseUrl === OPENAI_API_BASE_URL) {
-    return undefined;
+function getProviderLabel(provider: ByokProvider): string {
+  switch (provider) {
+    case 'claude':
+      return 'Claude';
+    case 'deepseek':
+      return 'DeepSeek';
+    case 'custom':
+      return 'Custom BYOK';
+    case 'openai':
+    default:
+      return 'OpenAI';
   }
-  return baseUrl;
 }
 
-function buildOpenAIChatCompletionsUrl(baseUrl?: string): string {
-  const normalizedBaseUrl = normalizeApiBaseUrl(baseUrl);
+function getByokApiKey(provider: ByokProvider): string | null {
+  const byokApiKey = getTrimmedValue(storage.getString('byok_api_key'));
+  if (byokApiKey) return byokApiKey;
+
+  if (provider === 'claude') {
+    return getTrimmedValue(getApiKey('claude_api_key'));
+  }
+
+  if (provider === 'openai' || provider === 'custom') {
+    return getTrimmedValue(getApiKey('openai_api_key'));
+  }
+
+  return null;
+}
+
+function getConfiguredBaseUrl(provider: ByokProvider): string | null {
+  const baseUrl =
+    getTrimmedValue(storage.getString('byok_base_url')) ??
+    getTrimmedValue(useSettingsStore.getState().byokBaseUrl);
+
+  if (provider === 'deepseek' && (!baseUrl || baseUrl === DEFAULT_BYOK_BASE_URL)) {
+    return DEEPSEEK_BYOK_BASE_URL;
+  }
+
+  if (provider === 'claude' && (!baseUrl || baseUrl === DEFAULT_BYOK_BASE_URL)) {
+    return CLAUDE_API_BASE_URL;
+  }
+
+  return baseUrl ?? DEFAULT_BYOK_BASE_URL;
+}
+
+function normalizeChatCompletionsBaseUrl(baseUrl: string | null | undefined): string | null {
+  const trimmed = baseUrl?.trim().replace(/^['"]+|['"]+$/g, '');
+  if (!trimmed) return null;
+
+  let normalized = trimmed
+    .replace(/\/+$/g, '')
+    .replace(/\/chat\/completions$/i, '');
+
+  if (
+    normalized === DEFAULT_BYOK_BASE_URL ||
+    normalized === 'https://api.deepseek.com'
+  ) {
+    normalized = `${normalized}/v1`;
+  }
+
+  return normalized;
+}
+
+function normalizeClaudeMessagesBaseUrl(baseUrl: string | null | undefined): string | null {
+  const trimmed = baseUrl?.trim().replace(/^['"]+|['"]+$/g, '');
+  if (!trimmed) return null;
+
+  let normalized = trimmed
+    .replace(/\/+$/g, '')
+    .replace(/\/messages$/i, '');
+
+  if (normalized === CLAUDE_API_BASE_URL) {
+    normalized = `${normalized}/v1`;
+  }
+
+  return normalized;
+}
+
+function buildChatCompletionsUrl(baseUrl: string | null | undefined): string {
+  const normalizedBaseUrl = normalizeChatCompletionsBaseUrl(baseUrl);
+  const url = normalizedBaseUrl
+    ? `${normalizedBaseUrl.replace(/\/$/, '')}/chat/completions`
+    : DEFAULT_URL;
+
+  return url;
+}
+
+function buildClaudeMessagesUrl(baseUrl: string | null | undefined): string {
+  const normalizedBaseUrl = normalizeClaudeMessagesBaseUrl(baseUrl);
   return normalizedBaseUrl
-    ? `${normalizedBaseUrl}/v1/chat/completions`
-    : OPENAI_API_URL;
+    ? `${normalizedBaseUrl.replace(/\/$/, '')}/messages`
+    : DEFAULT_CLAUDE_URL;
 }
 
-function buildClaudeMessagesUrl(baseUrl?: string): string {
-  const normalizedBaseUrl = normalizeApiBaseUrl(baseUrl);
-  return normalizedBaseUrl ? `${normalizedBaseUrl}/v1/messages` : CLAUDE_API_URL;
+function getConfiguredModel(provider: ByokProvider, purpose: ModelPurpose): string {
+  const configuredModel =
+    getTrimmedValue(storage.getString('byok_model')) ??
+    getTrimmedValue(useSettingsStore.getState().byokModel);
+
+  if (configuredModel) return configuredModel;
+
+  switch (provider) {
+    case 'claude':
+      return DEFAULT_CLAUDE_MODEL;
+    case 'deepseek':
+      return DEEPSEEK_BYOK_MODEL;
+    case 'custom':
+    case 'openai':
+    default:
+      return purpose === 'vision' ? DEFAULT_OPENAI_VISION_MODEL : DEFAULT_OPENAI_MODEL;
+  }
 }
 
 function buildUserPrompt(parentTaskTitle: string, freeSlotsMap?: string): string {
@@ -230,14 +323,15 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null;
 }
 
-async function callOpenAI(
+async function callOpenAICompatible(
   parentTaskTitle: string,
   freeSlotsMap: string | undefined,
   apiKey: string,
-  baseUrl?: string,
+  provider: ByokProvider,
 ): Promise<TaskBreakdownResult> {
-  const customModel = getPreference('byok_model', '').trim();
-  const url = buildOpenAIChatCompletionsUrl(baseUrl);
+  const baseUrl = getConfiguredBaseUrl(provider);
+  const url = buildChatCompletionsUrl(baseUrl);
+  const providerLabel = getProviderLabel(provider);
 
   const res = await fetch(url, {
     method: 'POST',
@@ -246,7 +340,7 @@ async function callOpenAI(
       Authorization: `Bearer ${apiKey}`,
     },
     body: JSON.stringify({
-      model: customModel || DEFAULT_OPENAI_MODEL,
+      model: getConfiguredModel(provider, 'text'),
       messages: [
         { role: 'system', content: SYSTEM_PROMPT },
         { role: 'user', content: buildUserPrompt(parentTaskTitle, freeSlotsMap) },
@@ -258,102 +352,24 @@ async function callOpenAI(
 
   if (!res.ok) {
     const err = await res.text();
-    throw new Error(`OpenAI API error (${res.status}): ${err}`);
+    throw new Error(`${providerLabel} API error (${res.status}): ${err}`);
   }
 
-  const data = await res.json();
+  const data = (await res.json()) as OpenAICompatibleResponse;
   const content = data.choices?.[0]?.message?.content;
   if (!content) {
-    throw new Error('OpenAI response did not include content.');
+    throw new Error(`${providerLabel} response did not include content.`);
   }
 
   return extractJSON(content);
-}
-
-export async function extractScheduleFromImage(base64Image: string): Promise<any> {
-  const apiKey = storage.getString('byok_api_key')?.trim();
-  if (!apiKey) {
-    throw new Error('请先在设置页配置 AI 密钥！');
-  }
-
-  const baseUrl = useSettingsStore.getState().byokBaseUrl?.trim();
-  const url = baseUrl
-    ? `${baseUrl.replace(/\/$/, '')}/v1/chat/completions`
-    : OPENAI_API_URL;
-  const customModel = getPreference('byok_model', '').trim();
-  const imageUrl = base64Image.startsWith('data:image/')
-    ? base64Image
-    : `data:image/jpeg;base64,${base64Image}`;
-
-  try {
-    const res = await fetch(url, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${apiKey}`,
-      },
-      body: JSON.stringify({
-        model: customModel || DEFAULT_OPENAI_VISION_MODEL,
-        response_format: { type: 'json_object' },
-        messages: [
-          {
-            role: 'system',
-            content:
-              '你是一个极其精准的课表视觉解析器。请从用户提供的课表图片中提取所有课程。必须输出 JSON 格式：{"courses": [{"title": "课程名", "dayOfWeek": 1到7的数字, "startPeriod": 起始节次数字, "endPeriod": 结束节次数字, "location": "上课地点"}]}',
-          },
-          {
-            role: 'user',
-            content: [
-              { type: 'text', text: '请解析这张课表图片。' },
-              {
-                type: 'image_url',
-                image_url: {
-                  url: imageUrl,
-                },
-              },
-            ],
-          },
-        ],
-      }),
-    });
-
-    if (!res.ok) {
-      const err = await res.text();
-      throw new Error(`OpenAI Vision API error (${res.status}): ${err}`);
-    }
-
-    const data = (await res.json()) as OpenAIVisionResponse;
-    const content = data.choices?.[0]?.message?.content;
-    if (!content) {
-      throw new Error('OpenAI Vision response did not include content.');
-    }
-
-    const parsed =
-      tryParseJSON(content) ??
-      tryParseCodeBlockJSON(content) ??
-      tryParseBraceJSON(content);
-
-    if (!parsed) {
-      throw new Error('OpenAI Vision response did not contain valid JSON.');
-    }
-
-    return parsed;
-  } catch (error) {
-    if (error instanceof Error) {
-      throw error;
-    }
-    throw new Error('Failed to extract schedule from image.');
-  }
 }
 
 async function callClaude(
   parentTaskTitle: string,
   freeSlotsMap: string | undefined,
   apiKey: string,
-  baseUrl?: string,
 ): Promise<TaskBreakdownResult> {
-  const customModel = getPreference('byok_model', '').trim();
-  const url = buildClaudeMessagesUrl(baseUrl);
+  const url = buildClaudeMessagesUrl(getConfiguredBaseUrl('claude'));
 
   const res = await fetch(url, {
     method: 'POST',
@@ -363,7 +379,7 @@ async function callClaude(
       'anthropic-version': '2023-06-01',
     },
     body: JSON.stringify({
-      model: customModel || DEFAULT_CLAUDE_MODEL,
+      model: getConfiguredModel('claude', 'text'),
       max_tokens: 1024,
       system: SYSTEM_PROMPT,
       messages: [
@@ -381,8 +397,8 @@ async function callClaude(
     throw new Error(`Claude API error (${res.status}): ${err}`);
   }
 
-  const data = await res.json();
-  const content = data.content?.[0]?.text;
+  const data = (await res.json()) as ClaudeResponse;
+  const content = data.content?.find((item) => item.text)?.text;
   if (!content) {
     throw new Error('Claude response did not include content.');
   }
@@ -390,34 +406,184 @@ async function callClaude(
   return extractJSON(content);
 }
 
+function normalizeImageDataUrl(base64Image: string): string {
+  return base64Image.startsWith('data:image/')
+    ? base64Image
+    : `data:image/jpeg;base64,${base64Image}`;
+}
+
+function toClaudeImageSource(base64Image: string): {
+  mediaType: string;
+  data: string;
+} {
+  const dataUrlMatch = base64Image.match(/^data:(image\/[a-zA-Z0-9.+-]+);base64,(.*)$/);
+  if (dataUrlMatch?.[1] && dataUrlMatch[2]) {
+    return {
+      mediaType: dataUrlMatch[1],
+      data: dataUrlMatch[2],
+    };
+  }
+
+  return {
+    mediaType: 'image/jpeg',
+    data: base64Image,
+  };
+}
+
+function parseScheduleJSON(content: string, providerLabel: string): unknown {
+  const parsed =
+    tryParseJSON(content) ??
+    tryParseCodeBlockJSON(content) ??
+    tryParseBraceJSON(content);
+
+  if (!parsed) {
+    throw new Error(`${providerLabel} vision response did not contain valid JSON.`);
+  }
+
+  return parsed;
+}
+
+async function extractScheduleWithOpenAICompatible(
+  base64Image: string,
+  apiKey: string,
+  provider: ByokProvider,
+): Promise<unknown> {
+  const baseUrl = getConfiguredBaseUrl(provider);
+  const url = buildChatCompletionsUrl(baseUrl);
+  const providerLabel = getProviderLabel(provider);
+  const imageUrl = normalizeImageDataUrl(base64Image);
+
+  const res = await fetch(url, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${apiKey}`,
+    },
+    body: JSON.stringify({
+      model: getConfiguredModel(provider, 'vision'),
+      response_format: { type: 'json_object' },
+      messages: [
+        {
+          role: 'system',
+          content: SCHEDULE_SYSTEM_PROMPT,
+        },
+        {
+          role: 'user',
+          content: [
+            { type: 'text', text: 'Parse this timetable image.' },
+            {
+              type: 'image_url',
+              image_url: {
+                url: imageUrl,
+              },
+            },
+          ],
+        },
+      ],
+    }),
+  });
+
+  if (!res.ok) {
+    const err = await res.text();
+    throw new Error(`${providerLabel} vision API error (${res.status}): ${err}`);
+  }
+
+  const data = (await res.json()) as OpenAICompatibleResponse;
+  const content = data.choices?.[0]?.message?.content;
+  if (!content) {
+    throw new Error(`${providerLabel} vision response did not include content.`);
+  }
+
+  return parseScheduleJSON(content, providerLabel);
+}
+
+async function extractScheduleWithClaude(
+  base64Image: string,
+  apiKey: string,
+): Promise<unknown> {
+  const url = buildClaudeMessagesUrl(getConfiguredBaseUrl('claude'));
+  const image = toClaudeImageSource(base64Image);
+
+  const res = await fetch(url, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'x-api-key': apiKey,
+      'anthropic-version': '2023-06-01',
+    },
+    body: JSON.stringify({
+      model: getConfiguredModel('claude', 'vision'),
+      max_tokens: 2048,
+      system: SCHEDULE_SYSTEM_PROMPT,
+      messages: [
+        {
+          role: 'user',
+          content: [
+            { type: 'text', text: 'Parse this timetable image.' },
+            {
+              type: 'image',
+              source: {
+                type: 'base64',
+                media_type: image.mediaType,
+                data: image.data,
+              },
+            },
+          ],
+        },
+      ],
+      temperature: 0.1,
+    }),
+  });
+
+  if (!res.ok) {
+    const err = await res.text();
+    throw new Error(`Claude vision API error (${res.status}): ${err}`);
+  }
+
+  const data = (await res.json()) as ClaudeResponse;
+  const content = data.content?.find((item) => item.text)?.text;
+  if (!content) {
+    throw new Error('Claude vision response did not include content.');
+  }
+
+  return parseScheduleJSON(content, 'Claude');
+}
+
+export async function extractScheduleFromImage(base64Image: string): Promise<any> {
+  const provider = getConfiguredProvider();
+  const apiKey = getByokApiKey(provider);
+
+  if (!apiKey) {
+    throw new Error('Configure a BYOK API key in Settings first.');
+  }
+
+  if (provider === 'claude') {
+    return extractScheduleWithClaude(base64Image, apiKey);
+  }
+
+  return extractScheduleWithOpenAICompatible(base64Image, apiKey, provider);
+}
+
 export async function streamTaskBreakdown(
   parentTaskTitle: string,
   freeSlotsMap?: string,
 ): Promise<TaskBreakdownResult> {
-  const provider = detectProvider();
+  const provider = getConfiguredProvider();
+  const apiKey = getByokApiKey(provider);
 
-  if (!provider) {
-    throw new Error('No AI API key found. Configure either OpenAI or Claude.');
+  if (!apiKey) {
+    throw new Error(`No ${getProviderLabel(provider)} API key found. Configure BYOK in Settings.`);
   }
 
-  const customBase = getProviderApiBaseUrl(provider);
-
-  switch (provider) {
-    case 'openai': {
-      const key = getOpenAICompatibleApiKey();
-      if (!key) throw new Error('OpenAI API key is missing.');
-      return callOpenAI(parentTaskTitle, freeSlotsMap, key, customBase);
-    }
-    case 'claude': {
-      const key = getClaudeApiKey();
-      if (!key) throw new Error('Claude API key is missing.');
-      return callClaude(parentTaskTitle, freeSlotsMap, key, customBase);
-    }
+  if (provider === 'claude') {
+    return callClaude(parentTaskTitle, freeSlotsMap, apiKey);
   }
+
+  return callOpenAICompatible(parentTaskTitle, freeSlotsMap, apiKey, provider);
 }
 
 export function isAIConfigured(): boolean {
-  return detectProvider() !== null;
+  return getByokApiKey(getConfiguredProvider()) !== null;
 }
 
 export type { ScheduledSubTask, TaskBreakdownResult } from './ByokConnector.types';

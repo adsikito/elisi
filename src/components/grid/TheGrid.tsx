@@ -16,6 +16,7 @@ import Animated, {
   useSharedValue,
   withTiming,
 } from 'react-native-reanimated';
+import { useSettingsStore } from '@/store/settingsStore';
 import { useGridStore } from '../../store/gridStore';
 import { useSyncGrid } from '../../hooks/useSyncGrid';
 import CourseBlock from './CourseBlock';
@@ -25,14 +26,58 @@ import ItemDetailModal from './ItemDetailModal';
 import type { TaskNodeExtended } from '../../store/gridStore';
 
 const WEEKDAYS = ['周一', '周二', '周三', '周四', '周五', '周六', '周日'];
-const TOTAL_PERIODS = 12;
-const ROW_HEIGHT = 64;
+const BASE_PERIOD_MINUTES = 45;
+const BASE_ROW_HEIGHT = 64;
+const MIN_ROW_HEIGHT = 52;
+const MAX_ROW_HEIGHT = 88;
 const HEADER_HEIGHT = 44;
 const TIME_COL_WIDTH = 48;
 const SCREEN_WIDTH = Dimensions.get('window').width;
 const COL_WIDTH = (SCREEN_WIDTH - TIME_COL_WIDTH) / 7;
 const GRID_WIDTH = COL_WIDTH * 7;
-const GRID_HEIGHT = ROW_HEIGHT * TOTAL_PERIODS;
+
+interface PeriodTimeSlot {
+  period: number;
+  startTime: string;
+  endTime: string;
+}
+
+interface PeriodLayout extends PeriodTimeSlot {
+  top: number;
+  height: number;
+  minutes: number;
+}
+
+interface GridMetrics {
+  slots: PeriodLayout[];
+  layoutByPeriod: ReadonlyMap<number, PeriodLayout>;
+  bodyHeight: number;
+}
+
+const DEFAULT_TIME_SLOTS: PeriodTimeSlot[] = [
+  { period: 1, startTime: '08:00', endTime: '08:45' },
+  { period: 2, startTime: '08:55', endTime: '09:40' },
+  { period: 3, startTime: '10:00', endTime: '10:45' },
+  { period: 4, startTime: '10:55', endTime: '11:40' },
+  { period: 5, startTime: '14:00', endTime: '14:45' },
+  { period: 6, startTime: '14:55', endTime: '15:40' },
+  { period: 7, startTime: '16:00', endTime: '16:45' },
+  { period: 8, startTime: '16:55', endTime: '17:40' },
+  { period: 9, startTime: '19:00', endTime: '19:45' },
+  { period: 10, startTime: '19:55', endTime: '20:40' },
+  { period: 11, startTime: '20:50', endTime: '21:35' },
+  { period: 12, startTime: '21:45', endTime: '22:30' },
+];
+
+const EMPTY_CELL_COLORS = [
+  '#FFF5F7',
+  '#F9F5FF',
+  '#F0FFF7',
+  '#FFFAF0',
+  '#F0F8FF',
+  '#FFFFF0',
+  '#FFF0F5',
+];
 
 const styles = StyleSheet.create({
   importBar: {
@@ -91,42 +136,196 @@ const styles = StyleSheet.create({
   },
 });
 
-const EMPTY_CELL_COLORS = [
-  '#FFF5F7',
-  '#F9F5FF',
-  '#F0FFF7',
-  '#FFFAF0',
-  '#F0F8FF',
-  '#FFFFF0',
-  '#FFF0F5',
-];
+function clamp(value: number, min: number, max: number): number {
+  return Math.min(max, Math.max(min, value));
+}
 
-const TimeColumn: React.FC = React.memo(() => {
-  const timeSlots = useGridStore((s) => s.timeSlots);
+function normalizeTime(value: unknown): string | null {
+  if (typeof value !== 'string') return null;
+  const match = value.trim().match(/^(\d{1,2}):(\d{2})$/);
+  if (!match) return null;
 
+  const hour = Number(match[1]);
+  const minute = Number(match[2]);
+  if (hour < 0 || hour > 23 || minute < 0 || minute > 59) return null;
+
+  return `${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}`;
+}
+
+function parseTimeToMinutes(time: string): number {
+  const [hour, minute] = time.split(':').map(Number);
+  return hour * 60 + minute;
+}
+
+function getSlotDurationMinutes(slot: PeriodTimeSlot): number {
+  const start = parseTimeToMinutes(slot.startTime);
+  const end = parseTimeToMinutes(slot.endTime);
+  const duration = end >= start ? end - start : end + 24 * 60 - start;
+  return Math.max(1, duration);
+}
+
+function normalizeTimeSlots(raw: unknown): PeriodTimeSlot[] | null {
+  const source =
+    typeof raw === 'string'
+      ? tryParseJSON(raw)
+      : Array.isArray(raw)
+        ? raw
+        : raw && typeof raw === 'object'
+          ? Object.values(raw as Record<string, unknown>)
+          : null;
+
+  if (!Array.isArray(source)) return null;
+
+  const slots = source
+    .map((item, index): PeriodTimeSlot | null => {
+      if (Array.isArray(item)) {
+        const startTime = normalizeTime(item[0]);
+        const endTime = normalizeTime(item[1]);
+        if (!startTime || !endTime) return null;
+        return { period: index + 1, startTime, endTime };
+      }
+
+      if (!item || typeof item !== 'object') return null;
+      const record = item as Record<string, unknown>;
+      const startTime = normalizeTime(
+        record.startTime ?? record.start_time ?? record.start ?? record.begin ?? record.from,
+      );
+      const endTime = normalizeTime(
+        record.endTime ?? record.end_time ?? record.end ?? record.finish ?? record.to,
+      );
+      if (!startTime || !endTime) return null;
+
+      const periodValue = Number(record.period ?? record.index ?? index + 1);
+      return {
+        period: Number.isInteger(periodValue) && periodValue > 0 ? periodValue : index + 1,
+        startTime,
+        endTime,
+      };
+    })
+    .filter((slot): slot is PeriodTimeSlot => slot !== null)
+    .sort((a, b) => a.period - b.period);
+
+  return slots.length > 0 ? slots : null;
+}
+
+function tryParseJSON(text: string): unknown[] | null {
+  try {
+    const parsed = JSON.parse(text);
+    return Array.isArray(parsed) ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
+function readSettingsTimeSlots(state: unknown): PeriodTimeSlot[] {
+  const record = state as Record<string, unknown>;
   return (
-    <View style={{ width: TIME_COL_WIDTH }}>
-      <View style={{ height: HEADER_HEIGHT }} />
-      {timeSlots.map((slot) => (
-        <View
-          key={slot.period}
-          style={{
-            height: ROW_HEIGHT,
-            justifyContent: 'center',
-            alignItems: 'center',
-          }}
-        >
-          <Text style={{ fontSize: 10, color: '#999', fontWeight: '600' }}>
-            {slot.period}
-          </Text>
-          <Text style={{ fontSize: 8, color: '#bbb', marginTop: 1 }}>
-            {slot.startTime}
-          </Text>
-        </View>
-      ))}
-    </View>
+    normalizeTimeSlots(
+      record.classTimeSlots ??
+        record.courseTimeSlots ??
+        record.scheduleTimeSlots ??
+        record.periodTimeSlots ??
+        record.classSchedule ??
+        record.timeSlots,
+    ) ?? DEFAULT_TIME_SLOTS
   );
-});
+}
+
+function buildGridMetrics(timeSlots: PeriodTimeSlot[]): GridMetrics {
+  let top = 0;
+  const layoutByPeriod = new Map<number, PeriodLayout>();
+  const slots = timeSlots.map((slot) => {
+    const minutes = getSlotDurationMinutes(slot);
+    const height = Math.round(
+      clamp(
+        (minutes / BASE_PERIOD_MINUTES) * BASE_ROW_HEIGHT,
+        MIN_ROW_HEIGHT,
+        MAX_ROW_HEIGHT,
+      ),
+    );
+    const layout: PeriodLayout = {
+      ...slot,
+      minutes,
+      top,
+      height,
+    };
+    top += height;
+    layoutByPeriod.set(slot.period, layout);
+    return layout;
+  });
+
+  return {
+    slots,
+    layoutByPeriod,
+    bodyHeight: top,
+  };
+}
+
+function getPeriodLayout(period: number, metrics: GridMetrics): PeriodLayout {
+  return (
+    metrics.layoutByPeriod.get(period) ??
+    metrics.slots[0] ?? {
+      period,
+      startTime: '00:00',
+      endTime: '00:45',
+      minutes: BASE_PERIOD_MINUTES,
+      top: 0,
+      height: BASE_ROW_HEIGHT,
+    }
+  );
+}
+
+function getPeriodSpanHeight(startPeriod: number, endPeriod: number, metrics: GridMetrics): number {
+  const start = Math.min(startPeriod, endPeriod);
+  const end = Math.max(startPeriod, endPeriod);
+  const height = metrics.slots
+    .filter((slot) => slot.period >= start && slot.period <= end)
+    .reduce((sum, slot) => sum + slot.height, 0);
+
+  if (height > 0) return height;
+  return getPeriodLayout(startPeriod, metrics).height;
+}
+
+interface TimeColumnProps {
+  slots: PeriodLayout[];
+}
+
+const TimeColumn: React.FC<TimeColumnProps> = React.memo(({ slots }) => (
+  <View style={{ width: TIME_COL_WIDTH }}>
+    <View style={{ height: HEADER_HEIGHT }} />
+    {slots.map((slot) => (
+      <View
+        key={slot.period}
+        style={{
+          height: slot.height,
+          justifyContent: 'center',
+          alignItems: 'center',
+          paddingHorizontal: 2,
+        }}
+      >
+        <Text style={{ fontSize: 10, color: '#999', fontWeight: '700' }}>
+          {slot.period}
+        </Text>
+        <Text
+          style={{ fontSize: 8, color: '#B0B0BE', marginTop: 1 }}
+          numberOfLines={1}
+          adjustsFontSizeToFit
+          minimumFontScale={0.78}
+        >
+          {slot.startTime}
+        </Text>
+        <Text
+          style={{ fontSize: 8, color: '#C6C2CC' }}
+          numberOfLines={1}
+          adjustsFontSizeToFit
+          minimumFontScale={0.78}
+        >
+          {slot.endTime}
+        </Text>
+      </View>
+    ))}
+  </View>
+));
 
 const WeekdayHeader: React.FC = React.memo(() => (
   <View style={{ flexDirection: 'row' }}>
@@ -151,18 +350,20 @@ const WeekdayHeader: React.FC = React.memo(() => (
 interface GridCellProps {
   dayOfWeek: number;
   period: number;
+  top: number;
+  height: number;
   occupied: boolean;
 }
 
 const GridCell: React.FC<GridCellProps> = React.memo(
-  ({ dayOfWeek, period, occupied }) => {
+  ({ dayOfWeek, period, top, height, occupied }) => {
     const cellStyle = useMemo(
       () => ({
         position: 'absolute' as const,
         left: (dayOfWeek - 1) * COL_WIDTH,
-        top: (period - 1) * ROW_HEIGHT,
+        top,
         width: COL_WIDTH,
-        height: ROW_HEIGHT,
+        height,
         borderRadius: 8,
         borderWidth: StyleSheet.hairlineWidth,
         borderColor: occupied ? 'rgba(255,255,255,0.18)' : 'rgba(203,180,219,0.32)',
@@ -172,7 +373,7 @@ const GridCell: React.FC<GridCellProps> = React.memo(
         opacity: occupied ? 0.06 : 0.78,
         overflow: 'hidden' as const,
       }),
-      [dayOfWeek, period, occupied],
+      [dayOfWeek, height, occupied, top],
     );
 
     const handlePress = useCallback(() => {
@@ -270,11 +471,13 @@ const WeekSwitcher: React.FC = React.memo(() => {
 
 const TheGrid: React.FC = () => {
   const { isLoading } = useSyncGrid();
+  const timeSlots = useSettingsStore(readSettingsTimeSlots);
   const courses = useGridStore((s) => s.courses);
   const dayTasks = useGridStore((s) => s.dayTasks);
   const openDetailModal = useGridStore((s) => s.openDetailModal);
   const isImporting = useGridStore((s) => s.isImporting);
 
+  const metrics = useMemo(() => buildGridMetrics(timeSlots), [timeSlots]);
   const loadingProgress = useSharedValue(0);
 
   React.useEffect(() => {
@@ -357,7 +560,7 @@ const TheGrid: React.FC = () => {
     }
   }, [isImporting]);
 
-  const gridHeight = HEADER_HEIGHT + GRID_HEIGHT;
+  const scrollContentHeight = HEADER_HEIGHT + metrics.bodyHeight + 80;
 
   return (
     <View style={{ flex: 1, backgroundColor: '#FAFAFA' }}>
@@ -388,17 +591,23 @@ const TheGrid: React.FC = () => {
       >
         <ScrollView
           style={{ flex: 1 }}
-          contentContainerStyle={{ minHeight: gridHeight + 80 }}
+          contentContainerStyle={{ minHeight: scrollContentHeight }}
           showsVerticalScrollIndicator={false}
           bounces
         >
           <View style={{ flexDirection: 'row' }}>
-            <TimeColumn />
+            <TimeColumn slots={metrics.slots} />
 
             <View>
               <WeekdayHeader />
 
-              <View style={{ position: 'relative', width: GRID_WIDTH, height: GRID_HEIGHT }}>
+              <View
+                style={{
+                  position: 'relative',
+                  width: GRID_WIDTH,
+                  height: metrics.bodyHeight,
+                }}
+              >
                 {isWeekEmpty ? (
                   <View pointerEvents="none" style={styles.emptyWatermark}>
                     <Text style={styles.emptyWatermarkText}>
@@ -408,14 +617,15 @@ const TheGrid: React.FC = () => {
                 ) : null}
 
                 {Array.from({ length: 7 }, (_, dayIndex) => dayIndex + 1).flatMap((day) =>
-                  Array.from({ length: TOTAL_PERIODS }, (_, periodIndex) => {
-                    const period = periodIndex + 1;
-                    const occupied = occupiedMap.get(day)?.has(period) ?? false;
+                  metrics.slots.map((slot) => {
+                    const occupied = occupiedMap.get(day)?.has(slot.period) ?? false;
                     return (
                       <GridCell
-                        key={`${day}-${period}`}
+                        key={`${day}-${slot.period}`}
                         dayOfWeek={day}
-                        period={period}
+                        period={slot.period}
+                        top={slot.top}
+                        height={slot.height}
                         occupied={occupied}
                       />
                     );
@@ -426,6 +636,7 @@ const TheGrid: React.FC = () => {
                   const dayItems = tasksByDay.get(day) ?? [];
                   if (dayItems.length === 0) return null;
                   const leftOffset = (day - 1) * COL_WIDTH;
+
                   return (
                     <View
                       key={`tasks-${day}`}
@@ -438,15 +649,29 @@ const TheGrid: React.FC = () => {
                       }}
                       pointerEvents="box-none"
                     >
-                      {dayItems.map((task, idx) => (
-                        <TaskSlotBlock
-                          key={task.id}
-                          task={task}
-                          index={idx}
-                          rowHeight={ROW_HEIGHT}
-                          onPress={() => handleTaskPress(task)}
-                        />
-                      ))}
+                      {dayItems.map((task, idx) => {
+                        const periodLayout = getPeriodLayout(task.startPeriod || 1, metrics);
+                        return (
+                          <View
+                            key={task.id}
+                            pointerEvents="box-none"
+                            style={{
+                              position: 'absolute',
+                              top: periodLayout.top,
+                              left: 0,
+                              right: 0,
+                              height: periodLayout.height,
+                            }}
+                          >
+                            <TaskSlotBlock
+                              task={{ ...task, startPeriod: 1 }}
+                              index={idx}
+                              rowHeight={periodLayout.height}
+                              onPress={() => handleTaskPress(task)}
+                            />
+                          </View>
+                        );
+                      })}
                     </View>
                   );
                 })}
@@ -454,34 +679,45 @@ const TheGrid: React.FC = () => {
                 {Array.from({ length: 7 }, (_, i) => i + 1).map((day) => {
                   const dayCourses = coursesByDay.get(day) ?? [];
                   const leftOffset = (day - 1) * COL_WIDTH;
-                  return dayCourses.map((course) => (
-                    <View
-                      key={course.id}
-                      pointerEvents="box-none"
-                      style={{
-                        position: 'absolute',
-                        left: leftOffset,
-                        width: COL_WIDTH,
-                        top: 0,
-                        bottom: 0,
-                      }}
-                    >
-                      <CourseBlock
-                        id={course.id}
-                        name={course.name}
-                        classroom={course.classroom}
-                        teacher={course.teacher}
-                        dayOfWeek={course.dayOfWeek}
-                        startPeriod={course.startPeriod}
-                        endPeriod={course.endPeriod}
-                        colorIndex={course.colorIndex}
-                        rowHeight={ROW_HEIGHT}
-                        headerHeight={0}
-                        weekRange={course.weekRange}
-                        onPress={() => handleCoursePress(course)}
-                      />
-                    </View>
-                  ));
+
+                  return dayCourses.map((course) => {
+                    const startLayout = getPeriodLayout(course.startPeriod, metrics);
+                    const spanCount = Math.max(1, course.endPeriod - course.startPeriod + 1);
+                    const spanHeight = getPeriodSpanHeight(
+                      course.startPeriod,
+                      course.endPeriod,
+                      metrics,
+                    );
+
+                    return (
+                      <View
+                        key={course.id}
+                        pointerEvents="box-none"
+                        style={{
+                          position: 'absolute',
+                          left: leftOffset,
+                          width: COL_WIDTH,
+                          top: startLayout.top,
+                          height: spanHeight,
+                        }}
+                      >
+                        <CourseBlock
+                          id={course.id}
+                          name={course.name}
+                          classroom={course.classroom}
+                          teacher={course.teacher}
+                          dayOfWeek={course.dayOfWeek}
+                          startPeriod={1}
+                          endPeriod={spanCount}
+                          colorIndex={course.colorIndex}
+                          rowHeight={spanHeight / spanCount}
+                          headerHeight={0}
+                          weekRange={course.weekRange}
+                          onPress={() => handleCoursePress(course)}
+                        />
+                      </View>
+                    );
+                  });
                 })}
               </View>
             </View>
