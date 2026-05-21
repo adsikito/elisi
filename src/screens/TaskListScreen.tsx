@@ -12,13 +12,6 @@ const COLORS = {
   accent: '#C1B3F0',
 };
 
-const taskStore = {
-  reorderTasks: (from: number, to: number, data: FlatRow[]) => {
-    if (from === to) return;
-    useTaskStore.setState({ flatList: [...data] });
-  },
-};
-
 const TaskListScreen: React.FC = () => {
   const insets = useSafeAreaInsets();
 
@@ -73,7 +66,10 @@ const TaskListScreen: React.FC = () => {
         ]}
         showsVerticalScrollIndicator={false}
         onDragEnd={({ data, from, to }) => {
-          taskStore.reorderTasks(from, to, data);
+          if (from === to) return;
+          const draggedTaskId = data[from]?.id;
+          if (!draggedTaskId) return;
+          void useTaskStore.getState().reorderTasks(draggedTaskId, to, data);
         }}
         ListEmptyComponent={
           <View style={styles.empty}>

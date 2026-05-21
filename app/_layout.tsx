@@ -6,8 +6,8 @@ import { SafeAreaProvider } from 'react-native-safe-area-context';
 
 export default function RootLayout() {
   return (
-    <SafeAreaProvider>
-      <GestureHandlerRootView style={{ flex: 1 }}>
+    <GestureHandlerRootView style={{ flex: 1 }}>
+      <SafeAreaProvider>
         <Tabs
           screenOptions={{
             headerShown: false,
@@ -25,7 +25,7 @@ export default function RootLayout() {
           <Tabs.Screen
             name="index"
             options={{
-              title: '网格',
+              title: '首页',
               tabBarIcon: ({ color, size }) => (
                 <Ionicons name="grid-outline" size={size} color={color} />
               ),
@@ -50,7 +50,7 @@ export default function RootLayout() {
             }}
           />
         </Tabs>
-      </GestureHandlerRootView>
-    </SafeAreaProvider>
+      </SafeAreaProvider>
+    </GestureHandlerRootView>
   );
 }
