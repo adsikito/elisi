@@ -8,6 +8,12 @@
     },
     "android": {
       "package": "com.yourname.mybrain"
-    }
+    },
+    "extra": {
+      "eas": {
+        "projectId": "a6d09c05-ad41-4dea-beb8-101159fc13ee"
+      }
+    },
+    "owner": "freecssli"
   }
 }
