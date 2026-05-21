@@ -20,11 +20,15 @@ export {
 export type {
   CourseRow,
   CourseScheduleRow,
+  TimeSlotRow,
   TaskNodeRow,
   TaskStatus,
   PreferenceRow,
 } from './schema';
 export {
+  DEFAULT_TIMETABLE_ID,
+  EXAM_TIMETABLE_ID,
+  DEFAULT_TIME_SLOT_ROWS,
   buildWeeksMask,
   parseWeeksMask,
   buildWeekRangeMask,
@@ -40,8 +44,11 @@ export {
   getCourseById,
   deleteCourse,
   deleteCourseSchedule,
+  getTimeSlots,
+  updateTimeSlot,
   getSchedulesByWeek,
   getSchedulesByWeeks,
+  getLessons,
   createTask,
   getTasksByCourseId,
   getTasksByDateRange,
@@ -55,6 +62,7 @@ export {
 export type {
   CreateCourseParams,
   InsertCourseScheduleParams,
+  UpdateTimeSlotParams,
   CreateTaskParams,
   ScheduleSlot,
   CourseStats,

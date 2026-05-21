@@ -152,6 +152,7 @@ const sheetStyle = useAnimatedStyle(() => ({
 
     const cleanTitle = title.trim();
     const currentWeek = useGridStore.getState().currentWeek;
+    const activeTimetableId = useGridStore.getState().activeTimetableId;
     // TODO: 未来接入周次选择器。
     const endWeek = currentWeek;
 
@@ -159,6 +160,7 @@ const sheetStyle = useAnimatedStyle(() => ({
       if (mode === 'course') {
         await createCourseWithSchedules(
           {
+            timetable_id: activeTimetableId,
             name: cleanTitle,
             color_index: Math.floor(Math.random() * COURSE_COLOR_COUNT),
             classroom: '',

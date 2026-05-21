@@ -1,11 +1,30 @@
 import * as SQLite from 'expo-sqlite';
-import { ALL_CREATE_INDEXES, ALL_CREATE_TABLES } from './schema';
+import {
+  ALL_CREATE_INDEXES,
+  ALL_CREATE_TABLES,
+  DEFAULT_TIMETABLE_ID,
+  DEFAULT_TIME_SLOT_ROWS,
+} from './schema';
 
 const DB_NAME = 'mybrain.db';
 const WAL_CHECKPOINT_PAGES = 1000;
 
 let _db: SQLite.SQLiteDatabase | null = null;
 let _initPromise: Promise<SQLite.SQLiteDatabase> | null = null;
+
+async function ensureColumn(
+  db: SQLite.SQLiteDatabase,
+  tableName: string,
+  columnName: string,
+  alterStatement: string,
+): Promise<void> {
+  const rows = await db.getAllAsync<{ name: string }>(`PRAGMA table_info(${tableName});`);
+  const hasColumn = rows.some((row) => row.name === columnName);
+
+  if (!hasColumn) {
+    await db.execAsync(alterStatement);
+  }
+}
 
 export async function withImmediateTransaction<T>(
   db: SQLite.SQLiteDatabase,
@@ -58,9 +77,18 @@ async function initDatabase(): Promise<SQLite.SQLiteDatabase> {
         await db.execAsync(ddl);
       }
 
+      await ensureColumn(
+        db,
+        'courses',
+        'timetable_id',
+        `ALTER TABLE courses ADD COLUMN timetable_id TEXT NOT NULL DEFAULT '${DEFAULT_TIMETABLE_ID}';`,
+      );
+
       for (const ddl of ALL_CREATE_INDEXES) {
         await db.execAsync(ddl);
       }
+
+      await seedDefaultTimeSlots(db);
     });
 
     return db;
@@ -124,6 +152,7 @@ export async function resetDatabase(): Promise<void> {
     await db.execAsync('DROP TABLE IF EXISTS task_nodes;');
     await db.execAsync('DROP TABLE IF EXISTS course_schedules;');
     await db.execAsync('DROP TABLE IF EXISTS courses;');
+    await db.execAsync('DROP TABLE IF EXISTS time_slots;');
     await db.execAsync('DROP TABLE IF EXISTS preferences;');
 
     for (const ddl of ALL_CREATE_TABLES) {
@@ -133,7 +162,28 @@ export async function resetDatabase(): Promise<void> {
     for (const ddl of ALL_CREATE_INDEXES) {
       await db.execAsync(ddl);
     }
+
+    await seedDefaultTimeSlots(db);
   });
+}
+
+async function seedDefaultTimeSlots(db: SQLite.SQLiteDatabase): Promise<void> {
+  const row = await db.getFirstAsync<{ count: number }>(
+    'SELECT COUNT(*) AS count FROM time_slots',
+  );
+
+  if ((row?.count ?? 0) > 0) return;
+
+  for (const slot of DEFAULT_TIME_SLOT_ROWS) {
+    await db.runAsync(
+      `INSERT INTO time_slots (id, period_name, start_time, end_time)
+       VALUES (?, ?, ?, ?)`,
+      slot.id,
+      slot.period_name,
+      slot.start_time,
+      slot.end_time,
+    );
+  }
 }
 
 export function generateId(): string {

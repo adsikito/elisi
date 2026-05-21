@@ -8,12 +8,15 @@ import {
   Pressable,
   ScrollView,
   StyleSheet,
+  Switch,
   Text,
   TextInput,
   View,
 } from 'react-native';
+import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { injectMockData } from '@/db/mockData';
+import { APP_MODULES } from '@/config/modules';
 import {
   DEFAULT_BYOK_BASE_URL,
   DEEPSEEK_BYOK_BASE_URL,
@@ -59,7 +62,9 @@ const SettingsScreen: React.FC = () => {
   const byokModel = useSettingsStore((s) => s.byokModel);
   const byokBaseUrl = useSettingsStore((s) => s.byokBaseUrl);
   const byokProvider = useSettingsStore((s) => s.byokProvider);
+  const activeModules = useSettingsStore((s) => s.activeModules);
   const updateSettings = useSettingsStore((s) => s.updateSettings);
+  const toggleModule = useSettingsStore((s) => s.toggleModule);
   const clearAllData = useSettingsStore((s) => s.clearAllData);
 
   // ── 本地编辑态（脱离 store 高频写入） ──
@@ -227,6 +232,61 @@ const SettingsScreen: React.FC = () => {
           <Pressable style={styles.saveBtn} onPress={saveDate}>
             <Text style={styles.saveBtnText}>保存</Text>
           </Pressable>
+        </View>
+
+        {/* ── 功能实验室 ── */}
+        <Text style={styles.sectionLabel}>功能实验室</Text>
+        <View style={styles.labCard}>
+          {APP_MODULES.map((module, index) => {
+            const enabled = activeModules.includes(module.id);
+            const isLast = index === APP_MODULES.length - 1;
+
+            return (
+              <Pressable
+                key={module.id}
+                accessibilityRole="switch"
+                accessibilityState={{ checked: enabled }}
+                onPress={() => toggleModule(module.id)}
+                style={[
+                  styles.labRow,
+                  !isLast ? styles.labRowBorder : null,
+                ]}
+              >
+                <View
+                  style={[
+                    styles.labIconBubble,
+                    {
+                      backgroundColor: module.background,
+                      borderColor: module.border,
+                    },
+                  ]}
+                >
+                  <Ionicons
+                    name={module.icon as React.ComponentProps<typeof Ionicons>['name']}
+                    size={20}
+                    color={module.accent}
+                  />
+                </View>
+
+                <View style={styles.labCopy}>
+                  <Text style={styles.labTitle}>{module.title}</Text>
+                  <Text style={styles.labDescription} numberOfLines={2}>
+                    {module.description}
+                  </Text>
+                </View>
+
+                <View onStartShouldSetResponder={() => true}>
+                  <Switch
+                    value={enabled}
+                    onValueChange={(value) => toggleModule(module.id, value)}
+                    trackColor={{ false: '#ECECF0', true: module.background }}
+                    thumbColor={enabled ? module.accent : '#FFFFFF'}
+                    ios_backgroundColor="#ECECF0"
+                  />
+                </View>
+              </Pressable>
+            );
+          })}
         </View>
 
         {/* ── AI 引擎配置 ── */}
@@ -416,6 +476,59 @@ const styles = StyleSheet.create({
         elevation: 2,
       },
     }),
+  },
+  labCard: {
+    backgroundColor: COLORS.card,
+    borderRadius: 18,
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    ...Platform.select({
+      ios: {
+        shadowColor: '#6D5B85',
+        shadowOffset: { width: 0, height: 4 },
+        shadowOpacity: 0.07,
+        shadowRadius: 14,
+      },
+      android: {
+        elevation: 3,
+      },
+    }),
+  },
+  labRow: {
+    minHeight: 76,
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 12,
+    gap: 12,
+  },
+  labRowBorder: {
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: '#F0EEF5',
+  },
+  labIconBubble: {
+    width: 46,
+    height: 46,
+    borderRadius: 15,
+    borderWidth: 1.5,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  labCopy: {
+    flex: 1,
+    minWidth: 0,
+  },
+  labTitle: {
+    fontSize: 15,
+    fontWeight: '800',
+    color: COLORS.title,
+    letterSpacing: 0,
+  },
+  labDescription: {
+    marginTop: 4,
+    fontSize: 12,
+    lineHeight: 17,
+    fontWeight: '600',
+    color: '#9692A3',
   },
 
   // ── Field ──

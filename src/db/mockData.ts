@@ -1,5 +1,10 @@
 import { getDatabase, generateId } from './database';
-import { buildWeekRangeMask, type TaskStatus } from './schema';
+import {
+  DEFAULT_TIMETABLE_ID,
+  EXAM_TIMETABLE_ID,
+  buildWeekRangeMask,
+  type TaskStatus,
+} from './schema';
 
 const COURSE_COUNT = 100;
 const ROOT_TASK_COUNT = 50;
@@ -201,14 +206,16 @@ export async function injectMockData(): Promise<void> {
     for (let i = 0; i < COURSE_COUNT; i += 1) {
       const courseId = generateId();
       courseIds.push(courseId);
+      const timetableId = i % 5 === 0 ? EXAM_TIMETABLE_ID : DEFAULT_TIMETABLE_ID;
 
       const createdAt = nextTimestamp();
       await db.runAsync(
         `INSERT INTO courses (
-           id, name, color_index, classroom, teacher,
+           id, timetable_id, name, color_index, classroom, teacher,
            start_week, end_week, note, created_at, updated_at
-         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         courseId,
+        timetableId,
         buildCourseName(i),
         randomInt(0, COURSE_COLOR_COUNT - 1),
         buildClassroom(i),

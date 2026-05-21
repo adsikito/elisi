@@ -9,15 +9,10 @@ const PASTEL = {
 
 interface TaskSlotBlockProps {
   task: TaskNodeExtended;
-  index: number;
-  rowHeight: number;
   onPress?: (e: import('react-native').GestureResponderEvent) => void;
 }
 
-const TaskSlotBlock: React.FC<TaskSlotBlockProps> = ({ task, index, rowHeight, onPress }) => {
-  const period = task.startPeriod || 1;
-  const topOffset = (period - 1) * rowHeight + 4;
-
+const TaskSlotBlock: React.FC<TaskSlotBlockProps> = ({ task, onPress }) => {
   return (
     <Pressable
       onPress={(e) => {
@@ -26,10 +21,10 @@ const TaskSlotBlock: React.FC<TaskSlotBlockProps> = ({ task, index, rowHeight, o
       }}
       style={{
         position: 'absolute',
-        top: topOffset,
+        top: 4,
+        bottom: 4,
         right: 4,
         width: '60%',
-        height: rowHeight - 8,
         backgroundColor: PASTEL.bg,
         borderRadius: 8,
         borderWidth: 1,

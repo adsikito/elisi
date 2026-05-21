@@ -122,7 +122,8 @@ function formatPeriodRange(start: number, end: number): string {
 
 async function generateFreeSlots(currentWeek: number): Promise<string> {
   const freeGrid: boolean[][] = Array.from({ length: 7 }, () => Array(12).fill(true));
-  const courses = await getSchedulesByWeek(currentWeek);
+  const activeTimetableId = useGridStore.getState().activeTimetableId;
+  const courses = await getSchedulesByWeek(currentWeek, activeTimetableId);
 
   for (const course of courses) {
     const dayIdx = course.day_of_week - 1;

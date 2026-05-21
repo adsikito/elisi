@@ -1,20 +1,35 @@
 import { create } from 'zustand';
 import { extractScheduleFromImage } from '@/ai/ByokConnector';
-import { insertCourse, insertCourseSchedule } from '@/db/queries';
-import type { TaskNodeRow } from '@/db/schema';
+import {
+  getTimeSlots,
+  insertCourse,
+  insertCourseSchedule,
+  updateTimeSlot as persistTimeSlot,
+} from '@/db/queries';
+import {
+  DEFAULT_TIMETABLE_ID,
+  EXAM_TIMETABLE_ID,
+  DEFAULT_TIME_SLOT_ROWS,
+  type TaskNodeRow,
+  type TimeSlotRow,
+} from '@/db/schema';
 
 // ============================================================
 // 类型定义
 // ============================================================
 
 export interface TimeSlot {
+  id: number;
   period: number;
+  periodName: string;
   startTime: string; // "HH:mm"
   endTime: string;
 }
 
 export interface CourseItem {
   id: string;
+  courseId?: string;
+  timetableId?: string;
   name: string;
   classroom: string;
   teacher: string;
@@ -49,6 +64,7 @@ export type DetailItem =
 interface GridState {
   // ── 硬日程 ──
   currentWeek: number;
+  activeTimetableId: string;
   timeSlots: TimeSlot[];
   courses: CourseItem[];
 
@@ -70,8 +86,15 @@ interface GridState {
 
   // ── Actions ──
   setCurrentWeek: (week: number) => void;
+  setActiveTimetableId: (timetableId: string) => void;
+  toggleTimetable: () => void;
   setCourses: (courses: CourseItem[]) => void;
   setDayTasks: (tasks: Record<number, TaskNodeExtended[]>) => void;
+  loadTimeSlots: () => Promise<void>;
+  updateTimeSlot: (
+    id: number,
+    changes: Partial<Pick<TimeSlot, 'periodName' | 'startTime' | 'endTime'>>,
+  ) => Promise<void>;
   forceRefreshGrid: () => void;
   openCreateModal: (dayOfWeek: number, period: number, dateStr?: string) => void;
   closeCreateModal: () => void;
@@ -86,20 +109,7 @@ interface GridState {
 // 常量
 // ============================================================
 
-const DEFAULT_TIME_SLOTS: TimeSlot[] = [
-  { period: 1, startTime: '08:00', endTime: '08:45' },
-  { period: 2, startTime: '08:55', endTime: '09:40' },
-  { period: 3, startTime: '10:00', endTime: '10:45' },
-  { period: 4, startTime: '10:55', endTime: '11:40' },
-  { period: 5, startTime: '14:00', endTime: '14:45' },
-  { period: 6, startTime: '14:55', endTime: '15:40' },
-  { period: 7, startTime: '16:00', endTime: '16:45' },
-  { period: 8, startTime: '16:55', endTime: '17:40' },
-  { period: 9, startTime: '19:00', endTime: '19:45' },
-  { period: 10, startTime: '19:55', endTime: '20:40' },
-  { period: 11, startTime: '20:50', endTime: '21:35' },
-  { period: 12, startTime: '21:45', endTime: '22:30' },
-];
+export const DEFAULT_TIME_SLOTS: TimeSlot[] = DEFAULT_TIME_SLOT_ROWS.map(mapTimeSlotRow);
 
 /** 空的 dayTasks 初始化字典 */
 const EMPTY_DAY_TASKS: Record<number, TaskNodeExtended[]> = {
@@ -108,6 +118,33 @@ const EMPTY_DAY_TASKS: Record<number, TaskNodeExtended[]> = {
 
 const IMPORT_START_WEEK = 1;
 const IMPORT_END_WEEK = 16;
+
+export const TIMETABLE_OPTIONS = [
+  {
+    id: DEFAULT_TIMETABLE_ID,
+    label: '本周课表',
+    shortLabel: '本周',
+    accent: '#7B4F9D',
+    background: '#EDE8FD',
+  },
+  {
+    id: EXAM_TIMETABLE_ID,
+    label: '考试周课表',
+    shortLabel: '考试周',
+    accent: '#B86144',
+    background: '#FFE3D8',
+  },
+] as const;
+
+function mapTimeSlotRow(row: TimeSlotRow): TimeSlot {
+  return {
+    id: row.id,
+    period: row.id,
+    periodName: row.period_name,
+    startTime: row.start_time,
+    endTime: row.end_time,
+  };
+}
 // ============================================================
 // Store
 // ============================================================
@@ -115,6 +152,7 @@ const IMPORT_END_WEEK = 16;
 export const useGridStore = create<GridState>((set, get) => ({
   // ── 初始状态 ──
   currentWeek: 1,
+  activeTimetableId: DEFAULT_TIMETABLE_ID,
   timeSlots: DEFAULT_TIME_SLOTS,
   courses: [],
   dayTasks: { ...EMPTY_DAY_TASKS },
@@ -128,9 +166,45 @@ export const useGridStore = create<GridState>((set, get) => ({
   // ── Actions ──
   setCurrentWeek: (week: number) => set({ currentWeek: week }),
 
+  setActiveTimetableId: (timetableId) =>
+    set((state) => {
+      const nextTimetableId = timetableId.trim() || DEFAULT_TIMETABLE_ID;
+      if (state.activeTimetableId === nextTimetableId) return state;
+
+      return {
+        activeTimetableId: nextTimetableId,
+        refreshTick: state.refreshTick + 1,
+      };
+    }),
+
+  toggleTimetable: () =>
+    set((state) => ({
+      activeTimetableId:
+        state.activeTimetableId === DEFAULT_TIMETABLE_ID
+          ? EXAM_TIMETABLE_ID
+          : DEFAULT_TIMETABLE_ID,
+      refreshTick: state.refreshTick + 1,
+    })),
+
   setCourses: (courses) => set({ courses }),
 
   setDayTasks: (tasks) => set({ dayTasks: tasks }),
+
+  loadTimeSlots: async () => {
+    const rows = await getTimeSlots();
+    set({ timeSlots: rows.map(mapTimeSlotRow) });
+  },
+
+  updateTimeSlot: async (id, changes) => {
+    await persistTimeSlot(id, {
+      period_name: changes.periodName,
+      start_time: changes.startTime,
+      end_time: changes.endTime,
+    });
+
+    const rows = await getTimeSlots();
+    set({ timeSlots: rows.map(mapTimeSlotRow) });
+  },
 
   forceRefreshGrid: () => set((state) => ({ refreshTick: state.refreshTick + 1 })),
 
@@ -195,6 +269,7 @@ export const useGridStore = create<GridState>((set, get) => ({
         const course = data.courses[index];
         const colorIndex = Math.floor(Math.random() * MACARON_COLORS.length);
         const courseId = await insertCourse({
+          timetable_id: get().activeTimetableId,
           name: course.title,
           color_index: colorIndex,
           classroom: course.location ?? '',

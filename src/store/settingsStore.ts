@@ -11,6 +11,7 @@
 
 import { create } from 'zustand';
 import { getDatabase } from '@/db/database';
+import { DEFAULT_ACTIVE_MODULES } from '@/config/modules';
 import {
   storage,
   getPreference,
@@ -52,6 +53,7 @@ export const DEFAULT_BYOK_PROVIDER: ByokProvider = 'openai';
 export const DEFAULT_BYOK_BASE_URL = 'https://api.openai.com';
 export const DEEPSEEK_BYOK_BASE_URL = 'https://api.deepseek.com/v1';
 export const DEEPSEEK_BYOK_MODEL = 'deepseek-chat';
+const ACTIVE_MODULES_STORAGE_KEY = 'active_modules';
 
 function normalizeByokProvider(value: string | undefined): ByokProvider {
   return value === 'openai' ||
@@ -60,6 +62,33 @@ function normalizeByokProvider(value: string | undefined): ByokProvider {
     value === 'custom'
     ? value
     : DEFAULT_BYOK_PROVIDER;
+}
+
+function normalizeActiveModules(value: unknown): string[] {
+  if (!Array.isArray(value)) return [...DEFAULT_ACTIVE_MODULES];
+
+  return Array.from(
+    new Set(
+      value
+        .map((item) => (typeof item === 'string' ? item.trim() : ''))
+        .filter(Boolean),
+    ),
+  );
+}
+
+function getInitialActiveModules(): string[] {
+  const stored = storage.getString(ACTIVE_MODULES_STORAGE_KEY);
+  if (!stored) return [...DEFAULT_ACTIVE_MODULES];
+
+  try {
+    return normalizeActiveModules(JSON.parse(stored));
+  } catch {
+    return [...DEFAULT_ACTIVE_MODULES];
+  }
+}
+
+function persistActiveModules(activeModules: string[]): void {
+  storage.set(ACTIVE_MODULES_STORAGE_KEY, JSON.stringify(activeModules));
 }
 
 // ============================================================
@@ -78,10 +107,13 @@ interface SettingsState {
   byokBaseUrl: string;
   /** BYOK provider */
   byokProvider: ByokProvider;
+  /** Enabled feature modules rendered without restarting the app */
+  activeModules: string[];
 
   // ── Actions ──
   /** 批量更新设置（自动同步写入 MMKV） */
-  updateSettings: (partial: Partial<Pick<SettingsState, 'semesterStartDate' | 'byokApiKey' | 'byokModel' | 'byokBaseUrl' | 'byokProvider'>>) => void;
+  updateSettings: (partial: Partial<Pick<SettingsState, 'semesterStartDate' | 'byokApiKey' | 'byokModel' | 'byokBaseUrl' | 'byokProvider' | 'activeModules'>>) => void;
+  toggleModule: (moduleId: string, enabled?: boolean) => void;
   /** 清空所有数据（SQLite 全表 + MMKV 全量 + Store 状态重置） */
   clearAllData: () => Promise<void>;
 }
@@ -97,6 +129,7 @@ const _initialByokBaseUrl =
   ((storage.getString('byok_base_url') as string | undefined) ?? DEFAULT_BYOK_BASE_URL).trim() ||
   DEFAULT_BYOK_BASE_URL;
 const _initialByokProvider = normalizeByokProvider(storage.getString('byok_provider'));
+const _initialActiveModules = getInitialActiveModules();
 
 // ============================================================
 // Store
@@ -109,6 +142,7 @@ export const useSettingsStore = create<SettingsState>((set) => ({
   byokModel: _initialByokModel,
   byokBaseUrl: _initialByokBaseUrl,
   byokProvider: _initialByokProvider,
+  activeModules: _initialActiveModules,
 
   // ── 更新设置 ──
   updateSettings: (partial) => {
@@ -147,7 +181,33 @@ export const useSettingsStore = create<SettingsState>((set) => ({
         storage.set('byok_provider', provider);
       }
 
+      if (partial.activeModules !== undefined) {
+        const activeModules = normalizeActiveModules(partial.activeModules);
+        next.activeModules = activeModules;
+        persistActiveModules(activeModules);
+      }
+
       return next;
+    });
+  },
+
+  toggleModule: (moduleId, enabled) => {
+    set((state) => {
+      const trimmedModuleId = moduleId.trim();
+      if (!trimmedModuleId) return state;
+
+      const current = new Set(state.activeModules);
+      const shouldEnable = enabled ?? !current.has(trimmedModuleId);
+
+      if (shouldEnable) {
+        current.add(trimmedModuleId);
+      } else {
+        current.delete(trimmedModuleId);
+      }
+
+      const activeModules = Array.from(current);
+      persistActiveModules(activeModules);
+      return { activeModules };
     });
   },
 
@@ -174,12 +234,14 @@ export const useSettingsStore = create<SettingsState>((set) => ({
         byokModel: '',
         byokBaseUrl: DEFAULT_BYOK_BASE_URL,
         byokProvider: DEFAULT_BYOK_PROVIDER,
+        activeModules: [...DEFAULT_ACTIVE_MODULES],
       });
 
       // 4. 将重置后的默认值写回 MMKV（避免下次加载读到空值）
       setPreference('semester_start_date', resetDate);
       storage.set('byok_base_url', DEFAULT_BYOK_BASE_URL);
       storage.set('byok_provider', DEFAULT_BYOK_PROVIDER);
+      persistActiveModules([...DEFAULT_ACTIVE_MODULES]);
     } catch (error) {
       console.error('[settingsStore] clearAllData 失败:', error);
       throw error;

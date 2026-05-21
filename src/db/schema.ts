@@ -14,10 +14,15 @@
 // 1. 课程表（courses）
 // ============================================================
 
+export const DEFAULT_TIMETABLE_ID = 'weekly';
+export const EXAM_TIMETABLE_ID = 'exam';
+
 /** 课程记录 — 对应 gridStore.ts 中的 CourseItem 持久化形态 */
 export interface CourseRow {
   /** 主键，UUID v4 */
   id: string;
+  /** 课程所属的课表 ID */
+  timetable_id: string;
   /** 课程名称，如「高等数学」 */
   name: string;
   /** 马卡龙色板索引 (0-11)，与 MACARON_COLORS 对齐 */
@@ -42,6 +47,7 @@ export interface CourseRow {
 export const CREATE_TABLE_COURSES = `
   CREATE TABLE IF NOT EXISTS courses (
     id           TEXT PRIMARY KEY NOT NULL,
+    timetable_id TEXT NOT NULL DEFAULT '${DEFAULT_TIMETABLE_ID}',
     name         TEXT NOT NULL,
     color_index  INTEGER NOT NULL DEFAULT 0,
     classroom    TEXT NOT NULL DEFAULT '',
@@ -110,6 +116,50 @@ export const CREATE_INDEX_SCHEDULES_COURSE_ID = `
 export const CREATE_INDEX_SCHEDULES_DAY = `
   CREATE INDEX IF NOT EXISTS idx_schedules_day
     ON course_schedules(day_of_week);
+`;
+
+// ============================================================
+// 3. 自定义作息时间表（time_slots）
+// ============================================================
+
+export interface TimeSlotRow {
+  /** 主键，同时作为课表节次编号 */
+  id: number;
+  /** 节次名称，如“第1节” */
+  period_name: string;
+  /** 开始时间，HH:mm */
+  start_time: string;
+  /** 结束时间，HH:mm */
+  end_time: string;
+}
+
+export const DEFAULT_TIME_SLOT_ROWS: readonly TimeSlotRow[] = [
+  { id: 1, period_name: '第1节', start_time: '08:00', end_time: '08:45' },
+  { id: 2, period_name: '第2节', start_time: '08:55', end_time: '09:40' },
+  { id: 3, period_name: '第3节', start_time: '10:00', end_time: '10:45' },
+  { id: 4, period_name: '第4节', start_time: '10:55', end_time: '11:40' },
+  { id: 5, period_name: '第5节', start_time: '14:00', end_time: '14:45' },
+  { id: 6, period_name: '第6节', start_time: '14:55', end_time: '15:40' },
+  { id: 7, period_name: '第7节', start_time: '16:00', end_time: '16:45' },
+  { id: 8, period_name: '第8节', start_time: '16:55', end_time: '17:40' },
+  { id: 9, period_name: '第9节', start_time: '19:00', end_time: '19:45' },
+  { id: 10, period_name: '第10节', start_time: '19:55', end_time: '20:40' },
+  { id: 11, period_name: '第11节', start_time: '20:50', end_time: '21:35' },
+  { id: 12, period_name: '第12节', start_time: '21:45', end_time: '22:30' },
+];
+
+export const CREATE_TABLE_TIME_SLOTS = `
+  CREATE TABLE IF NOT EXISTS time_slots (
+    id           INTEGER PRIMARY KEY NOT NULL,
+    period_name  TEXT NOT NULL,
+    start_time   TEXT NOT NULL,
+    end_time     TEXT NOT NULL
+  );
+`;
+
+export const CREATE_INDEX_COURSES_TIMETABLE_ID = `
+  CREATE INDEX IF NOT EXISTS idx_courses_timetable_id
+    ON courses(timetable_id);
 `;
 
 // ============================================================
@@ -209,12 +259,14 @@ export const CREATE_TABLE_PREFERENCES = `
 export const ALL_CREATE_TABLES: readonly string[] = [
   CREATE_TABLE_COURSES,
   CREATE_TABLE_COURSE_SCHEDULES,
+  CREATE_TABLE_TIME_SLOTS,
   CREATE_TABLE_TASK_NODES,
   CREATE_TABLE_PREFERENCES,
 ];
 
 /** 所有索引 DDL */
 export const ALL_CREATE_INDEXES: readonly string[] = [
+  CREATE_INDEX_COURSES_TIMETABLE_ID,
   CREATE_INDEX_SCHEDULES_COURSE_ID,
   CREATE_INDEX_SCHEDULES_DAY,
   CREATE_INDEX_TASKS_PARENT,

@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { useGridStore, type CourseItem, type TaskNodeExtended } from '../store/gridStore';
-import { getSchedulesByWeek, getTasksByDateRange, type ScheduleSlot, type TaskNodeRow } from '../db';
+import { getLessons, getTasksByDateRange, type ScheduleSlot, type TaskNodeRow } from '../db';
 import { getPreference } from '../store/mmkv';
 
 interface SyncState {
@@ -19,7 +19,7 @@ const EMPTY_DAY_TASKS: GroupedTasks = {
  * useSyncGrid — 监听 gridStore.currentWeek，自动从 SQLite 拉取硬课程 + 软待办。
  *
  * 混合查询策略：
- *   步骤A：getSchedulesByWeek(week) — SQLite 位运算，O(1) 周次过滤
+ *   步骤A：getLessons(week, timetableId) — SQLite 位运算，O(1) 周次 + 课表过滤
  *   步骤B：getTasksByDateRange(start, end) — 利用 idx_tasks_due_date 部分索引
  *   两步并行执行，结果分别写入 gridStore.courses 和 gridStore.dayTasks
  *
@@ -29,9 +29,11 @@ const EMPTY_DAY_TASKS: GroupedTasks = {
  */
 export function useSyncGrid(): SyncState {
   const currentWeek = useGridStore((s) => s.currentWeek);
+  const activeTimetableId = useGridStore((s) => s.activeTimetableId);
   const refreshTick = useGridStore((s) => s.refreshTick);
   const setCourses = useGridStore((s) => s.setCourses);
   const setDayTasks = useGridStore((s) => s.setDayTasks);
+  const loadTimeSlots = useGridStore((s) => s.loadTimeSlots);
 
   const [state, setState] = useState<SyncState>({ isLoading: false, error: null });
 
@@ -53,12 +55,13 @@ export function useSyncGrid(): SyncState {
 
     // 并行执行步骤A（硬课程）和步骤B（软待办）
     Promise.all([
-      getSchedulesByWeek(currentWeek),
+      loadTimeSlots(),
+      getLessons(currentWeek, activeTimetableId),
       weekDates
         ? getTasksByDateRange(weekDates[0], weekDates[1])
         : Promise.resolve<TaskNodeRow[]>([]),
     ])
-      .then(([slots, taskRows]) => {
+      .then(([, slots, taskRows]) => {
         if (cancelled || thisFetchId !== fetchIdRef.current) return;
 
         // 步骤A：ScheduleSlot → CourseItem
@@ -84,7 +87,7 @@ export function useSyncGrid(): SyncState {
     return () => {
       cancelled = true;
     };
-  }, [currentWeek, refreshTick, setCourses, setDayTasks]);
+  }, [activeTimetableId, currentWeek, refreshTick, loadTimeSlots, setCourses, setDayTasks]);
 
   return state;
 }
@@ -97,6 +100,8 @@ export function useSyncGrid(): SyncState {
 function mapScheduleToCourseItem(slot: ScheduleSlot): CourseItem {
   return {
     id: slot.schedule_id,
+    courseId: slot.course_id,
+    timetableId: slot.timetable_id,
     name: slot.course_name,
     classroom: slot.classroom,
     teacher: slot.teacher,

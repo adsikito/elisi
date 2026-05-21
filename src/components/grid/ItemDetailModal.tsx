@@ -97,7 +97,7 @@ const ItemDetailModal: React.FC = () => {
         onPress: async () => {
           try {
             if (detailItem.type === 'course') {
-              await deleteCourse(detailItem.item.id);
+              await deleteCourse(detailItem.item.courseId ?? detailItem.item.id);
             } else {
               await deleteTask(detailItem.item.id);
             }

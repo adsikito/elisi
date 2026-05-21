@@ -27,11 +27,8 @@ interface CourseBlockProps {
   classroom: string;
   teacher: string;
   dayOfWeek: number;
-  startPeriod: number;
-  endPeriod: number;
+  periodCount: number;
   colorIndex: number;
-  rowHeight: number;
-  headerHeight: number;
   weekRange?: string;
   onPress?: (e: import('react-native').GestureResponderEvent) => void;
 }
@@ -42,18 +39,12 @@ const CourseBlock: React.FC<CourseBlockProps> = ({
   name,
   classroom,
   teacher,
-  startPeriod,
-  endPeriod,
+  periodCount,
   colorIndex,
-  rowHeight,
   onPress,
 }) => {
   const scale = useSharedValue(1);
   const palette = MACARON_COLORS[colorIndex % MACARON_COLORS.length];
-
-  const spanCount = endPeriod - startPeriod + 1;
-  const blockHeight = spanCount * rowHeight - 4;
-  const topOffset = (startPeriod - 1) * rowHeight + 2;
 
   const animatedStyle = useAnimatedStyle(() => ({
     transform: [{ scale: scale.value }],
@@ -65,10 +56,10 @@ const CourseBlock: React.FC<CourseBlockProps> = ({
         animatedStyle,
         {
           position: 'absolute',
-          top: topOffset,
+          top: 2,
           left: 2,
           right: 2,
-          height: blockHeight,
+          bottom: 2,
           backgroundColor: palette.bg,
           borderRadius: 12,
           paddingHorizontal: 8,
@@ -98,11 +89,11 @@ const CourseBlock: React.FC<CourseBlockProps> = ({
           fontWeight: '700',
           color: palette.text,
         }}
-        numberOfLines={spanCount >= 2 ? 2 : 1}
+        numberOfLines={periodCount >= 2 ? 2 : 1}
       >
         {name}
       </Text>
-      {spanCount >= 2 && (
+      {periodCount >= 2 && (
         <>
           <Text
             style={{
@@ -123,7 +114,7 @@ const CourseBlock: React.FC<CourseBlockProps> = ({
           </Text>
         </>
       )}
-      {spanCount === 1 && (
+      {periodCount === 1 && (
         <Text
           style={{
             fontSize: 10,
