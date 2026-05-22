@@ -60,14 +60,15 @@ interface TaskItemProps {
   onToggleStatus: (id: string) => void | Promise<void>;
 }
 
-function runAfterAnimationCommit(
-  work: () => void | Promise<void>,
+function commitAfterSpringAndInteractions(
+  commit: () => void | Promise<void>,
   onSettled: () => void,
   label: string,
 ): void {
+  // Keep the store mutation and database write outside the active animation frame.
   InteractionManager.runAfterInteractions(() => {
     void Promise.resolve()
-      .then(work)
+      .then(commit)
       .catch((error) => {
         console.warn(`[TaskItem] ${label} failed:`, error);
       })
@@ -213,7 +214,7 @@ const TaskItem: React.FC<TaskItemProps> = ({
 
   const commitToggleStatus = useCallback(
     (id: string) => {
-      runAfterAnimationCommit(
+      commitAfterSpringAndInteractions(
         () => onToggleStatus(id),
         resetStatusCommit,
         'toggle status',
@@ -254,7 +255,7 @@ const TaskItem: React.FC<TaskItemProps> = ({
 
   const commitDecomposeTask = useCallback(
     (id: string) => {
-      runAfterAnimationCommit(
+      commitAfterSpringAndInteractions(
         () => decomposeTask(id),
         resetDecomposeCommit,
         'decompose task',

@@ -1,5 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { FlashList, type ListRenderItemInfo } from '@shopify/flash-list';
+import DraggableFlatList, {
+  type RenderItemParams,
+} from 'react-native-draggable-flatlist';
 import {
   ActivityIndicator,
   KeyboardAvoidingView,
@@ -115,11 +117,11 @@ const TaskListScreen: React.FC = () => {
   }, [loadRootTasks]);
 
   const renderItem = useCallback(
-    ({ item }: ListRenderItemInfo<FlatRow>) => (
+    ({ item, drag, isActive }: RenderItemParams<FlatRow>) => (
       <TaskItem
         row={item}
-        drag={() => {}}
-        isActive={false}
+        drag={drag}
+        isActive={isActive}
         onToggleExpand={toggleExpand}
         onToggleStatus={toggleStatus}
       />
@@ -128,6 +130,16 @@ const TaskListScreen: React.FC = () => {
   );
 
   const keyExtractor = useCallback((item: FlatRow) => item.id, []);
+
+  const handleDragEnd = useCallback(
+    ({ data, from, to }: { data: FlatRow[]; from: number; to: number }) => {
+      if (from === to) return;
+      const draggedTaskId = data[from]?.id;
+      if (!draggedTaskId) return;
+      void useTaskStore.getState().reorderTasks(draggedTaskId, to, data);
+    },
+    [],
+  );
 
   const listContentStyle = useMemo(
     () => [
@@ -159,7 +171,7 @@ const TaskListScreen: React.FC = () => {
           <Text style={styles.headerCount}>{flatData.length} 项</Text>
         </View>
 
-        <FlashList
+        <DraggableFlatList
           data={flatData}
           renderItem={renderItem}
           keyExtractor={keyExtractor}
@@ -167,6 +179,7 @@ const TaskListScreen: React.FC = () => {
           contentContainerStyle={listContentStyle}
           keyboardShouldPersistTaps="handled"
           showsVerticalScrollIndicator={false}
+          onDragEnd={handleDragEnd}
           ListEmptyComponent={
             <View style={styles.empty}>
               <View style={styles.emptyIcon}>

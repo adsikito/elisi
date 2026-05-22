@@ -731,89 +731,87 @@ const TheGrid: React.FC = () => {
 
                 {Array.from({ length: 7 }, (_, i) => i + 1).map((day) => {
                   const dayItems = tasksByDay.get(day) ?? [];
-                  if (dayItems.length === 0) return null;
+                  const dayCourses = coursesByDay.get(day) ?? [];
                   const leftOffset = (day - 1) * COL_WIDTH;
 
                   return (
-                    <View
-                      key={`tasks-${day}`}
-                      style={{
-                        position: 'absolute',
-                        left: leftOffset,
-                        width: COL_WIDTH,
-                        top: 0,
-                        bottom: 0,
-                        zIndex: 20,
-                        elevation: 4,
-                      }}
-                      pointerEvents="box-none"
-                    >
-                      {dayItems.map((task) => {
-                        const periodLayout = getPeriodLayout(task.startPeriod || 1, metrics);
+                    <React.Fragment key={`day-layer-${day}`}>
+                      {dayItems.length > 0 ? (
+                        <View
+                          style={{
+                            position: 'absolute',
+                            left: leftOffset,
+                            width: COL_WIDTH,
+                            top: 0,
+                            bottom: 0,
+                            zIndex: 20,
+                            elevation: 4,
+                          }}
+                          pointerEvents="box-none"
+                        >
+                          {dayItems.map((task) => {
+                            const periodLayout = getPeriodLayout(task.startPeriod || 1, metrics);
+                            return (
+                              <View
+                                key={task.id}
+                                pointerEvents="box-none"
+                                style={{
+                                  position: 'absolute',
+                                  top: periodLayout.top,
+                                  left: 0,
+                                  right: 0,
+                                  height: periodLayout.height,
+                                  zIndex: 20,
+                                  elevation: 4,
+                                }}
+                              >
+                                <TaskSlotBlock
+                                  task={task}
+                                  onPress={() => handleTaskPress(task)}
+                                />
+                              </View>
+                            );
+                          })}
+                        </View>
+                      ) : null}
+
+                      {dayCourses.map((course) => {
+                        const spanCount = Math.max(1, course.endPeriod - course.startPeriod + 1);
+                        const spanLayout = getPeriodSpanLayout(
+                          course.startPeriod,
+                          course.endPeriod,
+                          metrics,
+                        );
+
                         return (
                           <View
-                            key={task.id}
+                            key={course.id}
                             pointerEvents="box-none"
                             style={{
                               position: 'absolute',
-                              top: periodLayout.top,
-                              left: 0,
-                              right: 0,
-                              height: periodLayout.height,
-                              zIndex: 20,
-                              elevation: 4,
+                              left: leftOffset,
+                              width: COL_WIDTH,
+                              top: spanLayout.top,
+                              height: spanLayout.height,
+                              zIndex: 10,
                             }}
                           >
-                            <TaskSlotBlock
-                              task={task}
-                              onPress={() => handleTaskPress(task)}
+                            <CourseBlock
+                              id={course.id}
+                              name={course.name}
+                              classroom={course.classroom}
+                              teacher={course.teacher}
+                              dayOfWeek={course.dayOfWeek}
+                              periodCount={spanCount}
+                              colorIndex={course.colorIndex}
+                              weekRange={course.weekRange}
+                              onPress={() => handleCoursePress(course)}
                             />
                           </View>
                         );
                       })}
-                    </View>
+                    </React.Fragment>
                   );
-                })}
-
-                {Array.from({ length: 7 }, (_, i) => i + 1).map((day) => {
-                  const dayCourses = coursesByDay.get(day) ?? [];
-                  const leftOffset = (day - 1) * COL_WIDTH;
-
-                  return dayCourses.map((course) => {
-                    const spanCount = Math.max(1, course.endPeriod - course.startPeriod + 1);
-                    const spanLayout = getPeriodSpanLayout(
-                      course.startPeriod,
-                      course.endPeriod,
-                      metrics,
-                    );
-
-                    return (
-                      <View
-                        key={course.id}
-                        pointerEvents="box-none"
-                        style={{
-                          position: 'absolute',
-                          left: leftOffset,
-                          width: COL_WIDTH,
-                          top: spanLayout.top,
-                          height: spanLayout.height,
-                          zIndex: 10,
-                        }}
-                      >
-                        <CourseBlock
-                          id={course.id}
-                          name={course.name}
-                          classroom={course.classroom}
-                          teacher={course.teacher}
-                          dayOfWeek={course.dayOfWeek}
-                          periodCount={spanCount}
-                          colorIndex={course.colorIndex}
-                          weekRange={course.weekRange}
-                          onPress={() => handleCoursePress(course)}
-                        />
-                      </View>
-                    );
-                  });
                 })}
               </View>
             </View>
