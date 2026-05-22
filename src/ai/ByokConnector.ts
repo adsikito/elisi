@@ -4,7 +4,6 @@
 
 import { getApiKey, storage } from '@/store/mmkv';
 import {
-  DEFAULT_BYOK_BASE_URL,
   DEFAULT_BYOK_PROVIDER,
   DEEPSEEK_BYOK_BASE_URL,
   DEEPSEEK_BYOK_MODEL,
@@ -141,15 +140,15 @@ function getByokApiKey(provider: ByokProvider): string | null {
 function getConfiguredBaseUrl(provider: ByokProvider): string | null {
   const baseUrl = getTrimmedValue(useSettingsStore.getState().byokBaseUrl);
 
-  if (provider === 'deepseek' && (!baseUrl || baseUrl === DEFAULT_BYOK_BASE_URL)) {
+  if (provider === 'deepseek' && !baseUrl) {
     return DEEPSEEK_BYOK_BASE_URL;
   }
 
-  if (provider === 'claude' && (!baseUrl || baseUrl === DEFAULT_BYOK_BASE_URL)) {
+  if (provider === 'claude' && !baseUrl) {
     return CLAUDE_API_BASE_URL;
   }
 
-  return baseUrl ?? DEFAULT_BYOK_BASE_URL;
+  return baseUrl;
 }
 
 function sanitizeBaseUrl(

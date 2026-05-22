@@ -50,10 +50,11 @@ function getInitialSemesterStartDate(): string {
 export type ByokProvider = 'openai' | 'claude' | 'deepseek' | 'custom';
 
 export const DEFAULT_BYOK_PROVIDER: ByokProvider = 'openai';
-export const DEFAULT_BYOK_BASE_URL = 'https://api.openai.com';
+export const DEFAULT_BYOK_BASE_URL = '';
 export const DEEPSEEK_BYOK_BASE_URL = 'https://api.deepseek.com/v1';
 export const DEEPSEEK_BYOK_MODEL = 'deepseek-chat';
 const ACTIVE_MODULES_STORAGE_KEY = 'active_modules';
+const LEGACY_DEFAULT_BYOK_BASE_URL = 'https://api.openai.com';
 
 function normalizeByokProvider(value: string | undefined): ByokProvider {
   return value === 'openai' ||
@@ -62,6 +63,22 @@ function normalizeByokProvider(value: string | undefined): ByokProvider {
     value === 'custom'
     ? value
     : DEFAULT_BYOK_PROVIDER;
+}
+
+function normalizeByokBaseUrl(value: string | undefined): string {
+  const trimmed = (value ?? DEFAULT_BYOK_BASE_URL).trim();
+  return trimmed === LEGACY_DEFAULT_BYOK_BASE_URL ? DEFAULT_BYOK_BASE_URL : trimmed;
+}
+
+function getInitialByokBaseUrl(): string {
+  const stored = storage.getString('byok_base_url');
+  const normalized = normalizeByokBaseUrl(stored);
+
+  if (stored !== normalized) {
+    storage.set('byok_base_url', normalized);
+  }
+
+  return normalized;
 }
 
 function normalizeActiveModules(value: unknown): string[] {
@@ -125,9 +142,7 @@ interface SettingsState {
 const _initialSemesterStartDate = getInitialSemesterStartDate();
 const _initialByokApiKey = (storage.getString('byok_api_key') as string) ?? '';
 const _initialByokModel = (storage.getString('byok_model') as string) ?? '';
-const _initialByokBaseUrl =
-  ((storage.getString('byok_base_url') as string | undefined) ?? DEFAULT_BYOK_BASE_URL).trim() ||
-  DEFAULT_BYOK_BASE_URL;
+const _initialByokBaseUrl = getInitialByokBaseUrl();
 const _initialByokProvider = normalizeByokProvider(storage.getString('byok_provider'));
 const _initialActiveModules = getInitialActiveModules();
 
@@ -170,7 +185,7 @@ export const useSettingsStore = create<SettingsState>((set) => ({
       }
 
       if (partial.byokBaseUrl !== undefined) {
-        const trimmedBaseUrl = partial.byokBaseUrl.trim() || DEFAULT_BYOK_BASE_URL;
+        const trimmedBaseUrl = normalizeByokBaseUrl(partial.byokBaseUrl);
         next.byokBaseUrl = trimmedBaseUrl;
         storage.set('byok_base_url', trimmedBaseUrl);
       }

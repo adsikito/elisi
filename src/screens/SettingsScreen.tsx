@@ -54,13 +54,6 @@ const PROVIDER_OPTIONS: Array<{ label: string; value: ByokProvider }> = [
   { label: '自定义', value: 'custom' },
 ];
 
-const API_KEY_URLS: Record<ByokProvider, string> = {
-  openai: 'https://platform.openai.com/api-keys',
-  claude: 'https://console.anthropic.com/settings/keys',
-  deepseek: 'https://platform.deepseek.com/sign_in',
-  custom: 'https://platform.openai.com/api-keys',
-};
-
 const PROXY_KEY_URL = 'https://github.com/chatanywhere/GPT_API_free';
 
 const SettingsScreen: React.FC = () => {
@@ -123,12 +116,6 @@ const SettingsScreen: React.FC = () => {
       setBaseUrlText(DEFAULT_BYOK_BASE_URL);
     }
   };
-
-  const openApiKeyUrl = useCallback(() => {
-    Linking.openURL(API_KEY_URLS[providerText]).catch(() => {
-      Alert.alert('打开失败', '请稍后重试');
-    });
-  }, [providerText]);
 
   const openProxyKeyUrl = useCallback(() => {
     Linking.openURL(PROXY_KEY_URL).catch(() => {
@@ -346,7 +333,7 @@ const SettingsScreen: React.FC = () => {
             ]}
             value={baseUrlText}
             onChangeText={setBaseUrlText}
-            placeholder="https://api.openai.com"
+            placeholder=""
             placeholderTextColor={COLORS.placeholder}
             autoCapitalize="none"
             autoCorrect={false}
@@ -358,18 +345,10 @@ const SettingsScreen: React.FC = () => {
             <Text style={styles.apiHelpPrefix}>没有 API 密钥？</Text>
             <Text
               style={styles.apiHelpLink}
-              onPress={openApiKeyUrl}
-              accessibilityRole="link"
-            >
-              点击获取密钥申请地址
-            </Text>
-            <Text style={styles.apiHelpDivider}>·</Text>
-            <Text
-              style={styles.apiHelpLink}
               onPress={openProxyKeyUrl}
               accessibilityRole="link"
             >
-              申请中转 Key
+              点击 申请中转 Key
             </Text>
           </View>
 

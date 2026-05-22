@@ -56,6 +56,7 @@ const QuickAddInput: React.FC<QuickAddInputProps> = ({ bottomInset }) => {
     <View style={[styles.inputDock, { paddingBottom: Math.max(bottomInset, 10) }]}>
       <View pointerEvents="none" style={styles.inputDockGlow}>
         <View style={styles.inputDockGlowFaint} />
+        <View style={styles.inputDockGlowMid} />
         <View style={styles.inputDockGlowStrong} />
       </View>
 
@@ -92,7 +93,7 @@ const QuickAddInput: React.FC<QuickAddInputProps> = ({ bottomInset }) => {
           {isSubmitting ? (
             <ActivityIndicator size="small" color="#FFFDFE" />
           ) : (
-            <Ionicons name="send" size={18} color="#FFFDFE" />
+            <Text style={styles.sendButtonText}>➔</Text>
           )}
         </Pressable>
       </View>
@@ -279,7 +280,15 @@ const styles = StyleSheet.create({
     right: 0,
     bottom: 0,
     height: 54,
-    backgroundColor: 'rgba(193,179,240,0.08)',
+    backgroundColor: 'rgba(193,179,240,0.05)',
+  },
+  inputDockGlowMid: {
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    bottom: 0,
+    height: 36,
+    backgroundColor: 'rgba(207,195,237,0.12)',
   },
   inputDockGlowStrong: {
     position: 'absolute',
@@ -343,5 +352,11 @@ const styles = StyleSheet.create({
   sendButtonDisabled: {
     backgroundColor: '#D8D0E7',
     shadowOpacity: 0.08,
+  },
+  sendButtonText: {
+    color: '#FFFDFE',
+    fontSize: 22,
+    lineHeight: 24,
+    fontWeight: '800',
   },
 });
