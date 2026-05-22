@@ -1,5 +1,5 @@
 import type { SQLiteDatabase } from 'expo-sqlite';
-import { generateId, getDatabase, withImmediateTransaction } from './database';
+import { generateId, getDatabase } from './database';
 import type {
   CourseRow,
   TaskNodeRow,
@@ -68,7 +68,20 @@ async function runWrite<T>(
   const db = await getDatabase();
 
   try {
-    return await withImmediateTransaction(db, () => action(db));
+    await db.execAsync('BEGIN IMMEDIATE;');
+
+    try {
+      const result = await action(db);
+      await db.execAsync('COMMIT;');
+      return result;
+    } catch (error) {
+      try {
+        await db.execAsync('ROLLBACK;');
+      } catch {
+        // Ignore rollback failures. The original error is more useful.
+      }
+      throw error;
+    }
   } catch (error) {
     throw new DatabaseError(
       `${operation} failed: ${toDatabaseErrorMessage(error)}`,
@@ -641,6 +654,34 @@ export async function getTasksByDateRange(
       error,
     );
   }
+}
+
+function assertISODate(value: string, label: string): void {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) {
+    throw new RangeError(`${label} must use YYYY-MM-DD format: ${value}`);
+  }
+}
+
+export async function moveTasksByDate(
+  fromDate: string,
+  toDate: string,
+): Promise<number> {
+  assertISODate(fromDate, 'fromDate');
+  assertISODate(toDate, 'toDate');
+
+  return runWrite('moveTasksByDate', async (db) => {
+    const result = await db.runAsync(
+      `UPDATE task_nodes
+       SET due_date = ?, updated_at = datetime('now')
+       WHERE due_date IS NOT NULL
+         AND substr(due_date, 1, 10) = ?
+         AND status NOT IN ('done', 'cancelled')`,
+      toDate,
+      fromDate,
+    );
+
+    return result.changes ?? 0;
+  });
 }
 
 export async function getCourseStats(

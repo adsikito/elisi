@@ -12,11 +12,15 @@ import {
   useSettingsStore,
 } from '@/store/settingsStore';
 import type {
+  CopilotAction,
+  CopilotCommandContext,
+  CopilotPlanResult,
+  CopilotTaskStatus,
   ScheduledSubTask,
   TaskBreakdownResult,
 } from './ByokConnector.types';
 
-const DEFAULT_URL = 'https://api.openai.com/v1/chat/completions';
+const OPENAI_API_URL = 'https://api.openai.com/v1/chat/completions';
 const DEFAULT_CLAUDE_URL = 'https://api.anthropic.com/v1/messages';
 const CLAUDE_API_BASE_URL = 'https://api.anthropic.com';
 const DEFAULT_DURATION_MINUTES = 45;
@@ -39,6 +43,19 @@ interface ClaudeResponse {
   }>;
 }
 
+interface ScheduleCourse {
+  title: string;
+  dayOfWeek: number;
+  startPeriod: number;
+  endPeriod: number;
+  location?: string;
+  teacher?: string;
+}
+
+interface ScheduleExtractionResult {
+  courses: ScheduleCourse[];
+}
+
 type ModelPurpose = 'text' | 'vision';
 
 const SYSTEM_PROMPT = [
@@ -58,6 +75,18 @@ const SCHEDULE_SYSTEM_PROMPT = [
   '{"courses":[{"title":"course name","dayOfWeek":1,"startPeriod":1,"endPeriod":2,"location":"classroom"}]}',
   'dayOfWeek must be 1 for Monday through 7 for Sunday.',
   'startPeriod and endPeriod must be numbers.',
+].join('\n');
+
+const COPILOT_SYSTEM_PROMPT = [
+  'You are MyBrain Copilot, a precise task planning assistant.',
+  'Convert the user command into a short suggestion and executable actions.',
+  'Return JSON only, with this exact structure:',
+  '{"summary":"short Chinese suggestion","actions":[{"type":"move_tasks_by_date","from_date":"YYYY-MM-DD","to_date":"YYYY-MM-DD"},{"type":"create_task","title":"task name","due_date":"YYYY-MM-DD","description":"optional","start_period":3,"duration_minutes":45}]}',
+  'Supported action types are only create_task and move_tasks_by_date.',
+  'Use move_tasks_by_date for commands like postponing, moving, delaying, or rescheduling tasks from one day to another.',
+  'Use create_task when the user asks to add or schedule a new task.',
+  'Use the supplied context dates for relative words like today, tomorrow, and this week.',
+  'Omit fields that are unknown. Do not output markdown, commentary, or extra keys.',
 ].join('\n');
 
 function getTrimmedValue(value: string | null | undefined): string | null {
@@ -110,9 +139,7 @@ function getByokApiKey(provider: ByokProvider): string | null {
 }
 
 function getConfiguredBaseUrl(provider: ByokProvider): string | null {
-  const baseUrl =
-    getTrimmedValue(storage.getString('byok_base_url')) ??
-    getTrimmedValue(useSettingsStore.getState().byokBaseUrl);
+  const baseUrl = getTrimmedValue(useSettingsStore.getState().byokBaseUrl);
 
   if (provider === 'deepseek' && (!baseUrl || baseUrl === DEFAULT_BYOK_BASE_URL)) {
     return DEEPSEEK_BYOK_BASE_URL;
@@ -125,52 +152,37 @@ function getConfiguredBaseUrl(provider: ByokProvider): string | null {
   return baseUrl ?? DEFAULT_BYOK_BASE_URL;
 }
 
-function normalizeChatCompletionsBaseUrl(baseUrl: string | null | undefined): string | null {
+function sanitizeBaseUrl(
+  baseUrl: string | null | undefined,
+  terminalPathPattern: RegExp,
+): string | null {
   const trimmed = baseUrl?.trim().replace(/^['"]+|['"]+$/g, '');
   if (!trimmed) return null;
 
-  let normalized = trimmed
+  return trimmed
     .replace(/\/+$/g, '')
-    .replace(/\/chat\/completions$/i, '');
-
-  if (
-    normalized === DEFAULT_BYOK_BASE_URL ||
-    normalized === 'https://api.deepseek.com'
-  ) {
-    normalized = `${normalized}/v1`;
-  }
-
-  return normalized;
+    .replace(terminalPathPattern, '');
 }
 
-function normalizeClaudeMessagesBaseUrl(baseUrl: string | null | undefined): string | null {
-  const trimmed = baseUrl?.trim().replace(/^['"]+|['"]+$/g, '');
-  if (!trimmed) return null;
-
-  let normalized = trimmed
-    .replace(/\/+$/g, '')
-    .replace(/\/messages$/i, '');
-
-  if (normalized === CLAUDE_API_BASE_URL) {
-    normalized = `${normalized}/v1`;
-  }
-
-  return normalized;
-}
-
-function buildChatCompletionsUrl(baseUrl: string | null | undefined): string {
-  const normalizedBaseUrl = normalizeChatCompletionsBaseUrl(baseUrl);
-  const url = normalizedBaseUrl
-    ? `${normalizedBaseUrl.replace(/\/$/, '')}/chat/completions`
-    : DEFAULT_URL;
+function buildChatCompletionsUrl(provider: ByokProvider): string {
+  const baseUrl = sanitizeBaseUrl(
+    getConfiguredBaseUrl(provider),
+    /\/v1(?:\/chat\/completions)?$/i,
+  );
+  const url = baseUrl
+    ? `${baseUrl.replace(/\/$/, '')}/v1/chat/completions`
+    : OPENAI_API_URL;
 
   return url;
 }
 
-function buildClaudeMessagesUrl(baseUrl: string | null | undefined): string {
-  const normalizedBaseUrl = normalizeClaudeMessagesBaseUrl(baseUrl);
-  return normalizedBaseUrl
-    ? `${normalizedBaseUrl.replace(/\/$/, '')}/messages`
+function buildClaudeMessagesUrl(): string {
+  const baseUrl = sanitizeBaseUrl(
+    getConfiguredBaseUrl('claude'),
+    /\/v1(?:\/messages)?$/i,
+  );
+  return baseUrl
+    ? `${baseUrl.replace(/\/$/, '')}/v1/messages`
     : DEFAULT_CLAUDE_URL;
 }
 
@@ -204,6 +216,18 @@ function buildUserPrompt(parentTaskTitle: string, freeSlotsMap?: string): string
     '',
     'This is the free slots map for the current week:',
     trimmedMap,
+  ].join('\n');
+}
+
+function buildCopilotPrompt(
+  command: string,
+  context: CopilotCommandContext,
+): string {
+  return [
+    `User command: ${command}`,
+    '',
+    'Context:',
+    JSON.stringify(context),
   ].join('\n');
 }
 
@@ -255,6 +279,97 @@ function normalizeTaskBreakdown(raw: unknown): TaskBreakdownResult {
       .map((item) => normalizeSubTask(item))
       .filter((item): item is ScheduledSubTask => item !== null),
   };
+}
+
+function extractCopilotPlanJSON(text: string): CopilotPlanResult {
+  const parsed =
+    tryParseJSON(text) ??
+    tryParseCodeBlockJSON(text) ??
+    tryParseBraceJSON(text);
+
+  if (!parsed) {
+    throw new Error('AI response did not contain valid JSON.');
+  }
+
+  return normalizeCopilotPlan(parsed);
+}
+
+function normalizeCopilotPlan(raw: unknown): CopilotPlanResult {
+  if (!isRecord(raw)) {
+    throw new Error('AI response must be a JSON object.');
+  }
+
+  const summary =
+    typeof raw.summary === 'string' && raw.summary.trim()
+      ? raw.summary.trim()
+      : '我整理好了建议。';
+
+  const actions = Array.isArray(raw.actions)
+    ? raw.actions
+        .map((item) => normalizeCopilotAction(item))
+        .filter((item): item is CopilotAction => item !== null)
+    : [];
+
+  return { summary, actions };
+}
+
+function normalizeCopilotAction(raw: unknown): CopilotAction | null {
+  if (!isRecord(raw)) return null;
+
+  if (raw.type === 'create_task') {
+    const title = typeof raw.title === 'string' ? raw.title.trim() : '';
+    if (!title) return null;
+
+    const action: Extract<CopilotAction, { type: 'create_task' }> = {
+      type: 'create_task',
+      title,
+    };
+    const dueDate = normalizeDate(raw.due_date ?? raw.target_date);
+    if (dueDate) {
+      action.due_date = dueDate;
+    }
+
+    if (typeof raw.description === 'string' && raw.description.trim()) {
+      action.description = raw.description.trim();
+    }
+
+    const startPeriod = normalizePeriod(raw.start_period);
+    if (startPeriod !== null) {
+      action.start_period = startPeriod;
+    }
+
+    const duration = normalizeDuration(raw.duration_minutes);
+    if (duration !== null) {
+      action.duration_minutes = duration;
+    }
+
+    const priority = normalizePriority(raw.priority);
+    if (priority !== null) {
+      action.priority = priority;
+    }
+
+    return action;
+  }
+
+  if (raw.type === 'move_tasks_by_date') {
+    const fromDate = normalizeDate(raw.from_date);
+    const toDate = normalizeDate(raw.to_date);
+    if (!fromDate || !toDate) return null;
+
+    const action: Extract<CopilotAction, { type: 'move_tasks_by_date' }> = {
+      type: 'move_tasks_by_date',
+      from_date: fromDate,
+      to_date: toDate,
+    };
+    const status = normalizeCopilotStatus(raw.status);
+    if (status) {
+      action.status = status;
+    }
+
+    return action;
+  }
+
+  return null;
 }
 
 function normalizeSubTask(raw: unknown): ScheduledSubTask | null {
@@ -319,18 +434,46 @@ function normalizePeriod(value: unknown): number | null {
   return null;
 }
 
+function normalizePriority(value: unknown): number | null {
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    return Math.max(1, Math.round(value));
+  }
+
+  if (typeof value === 'string' && value.trim()) {
+    const parsed = Number(value);
+    if (Number.isFinite(parsed)) {
+      return Math.max(1, Math.round(parsed));
+    }
+  }
+
+  return null;
+}
+
+function normalizeCopilotStatus(value: unknown): CopilotTaskStatus | null {
+  if (
+    value === 'pending' ||
+    value === 'in_progress' ||
+    value === 'done' ||
+    value === 'cancelled' ||
+    value === 'all'
+  ) {
+    return value;
+  }
+
+  return null;
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null;
 }
 
-async function callOpenAICompatible(
-  parentTaskTitle: string,
-  freeSlotsMap: string | undefined,
-  apiKey: string,
+async function postOpenAICompatible(
   provider: ByokProvider,
-): Promise<TaskBreakdownResult> {
-  const baseUrl = getConfiguredBaseUrl(provider);
-  const url = buildChatCompletionsUrl(baseUrl);
+  apiKey: string,
+  body: Record<string, unknown>,
+  purposeLabel: string,
+): Promise<OpenAICompatibleResponse> {
+  const url = buildChatCompletionsUrl(provider);
   const providerLabel = getProviderLabel(provider);
 
   const res = await fetch(url, {
@@ -339,7 +482,51 @@ async function callOpenAICompatible(
       'Content-Type': 'application/json',
       Authorization: `Bearer ${apiKey}`,
     },
-    body: JSON.stringify({
+    body: JSON.stringify(body),
+  });
+
+  if (!res.ok) {
+    const err = await res.text();
+    throw new Error(`${providerLabel} ${purposeLabel} API error (${res.status}): ${err}`);
+  }
+
+  return (await res.json()) as OpenAICompatibleResponse;
+}
+
+async function postClaude(
+  apiKey: string,
+  body: Record<string, unknown>,
+  purposeLabel: string,
+): Promise<ClaudeResponse> {
+  const res = await fetch(buildClaudeMessagesUrl(), {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'x-api-key': apiKey,
+      'anthropic-version': '2023-06-01',
+    },
+    body: JSON.stringify(body),
+  });
+
+  if (!res.ok) {
+    const err = await res.text();
+    throw new Error(`Claude ${purposeLabel} API error (${res.status}): ${err}`);
+  }
+
+  return (await res.json()) as ClaudeResponse;
+}
+
+async function callOpenAICompatible(
+  parentTaskTitle: string,
+  freeSlotsMap: string | undefined,
+  apiKey: string,
+  provider: ByokProvider,
+): Promise<TaskBreakdownResult> {
+  const providerLabel = getProviderLabel(provider);
+  const data = await postOpenAICompatible(
+    provider,
+    apiKey,
+    {
       model: getConfiguredModel(provider, 'text'),
       messages: [
         { role: 'system', content: SYSTEM_PROMPT },
@@ -347,15 +534,10 @@ async function callOpenAICompatible(
       ],
       temperature: 0.3,
       response_format: { type: 'json_object' },
-    }),
-  });
+    },
+    'text',
+  );
 
-  if (!res.ok) {
-    const err = await res.text();
-    throw new Error(`${providerLabel} API error (${res.status}): ${err}`);
-  }
-
-  const data = (await res.json()) as OpenAICompatibleResponse;
   const content = data.choices?.[0]?.message?.content;
   if (!content) {
     throw new Error(`${providerLabel} response did not include content.`);
@@ -369,16 +551,9 @@ async function callClaude(
   freeSlotsMap: string | undefined,
   apiKey: string,
 ): Promise<TaskBreakdownResult> {
-  const url = buildClaudeMessagesUrl(getConfiguredBaseUrl('claude'));
-
-  const res = await fetch(url, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'x-api-key': apiKey,
-      'anthropic-version': '2023-06-01',
-    },
-    body: JSON.stringify({
+  const data = await postClaude(
+    apiKey,
+    {
       model: getConfiguredModel('claude', 'text'),
       max_tokens: 1024,
       system: SYSTEM_PROMPT,
@@ -389,21 +564,76 @@ async function callClaude(
         },
       ],
       temperature: 0.3,
-    }),
-  });
+    },
+    'text',
+  );
 
-  if (!res.ok) {
-    const err = await res.text();
-    throw new Error(`Claude API error (${res.status}): ${err}`);
-  }
-
-  const data = (await res.json()) as ClaudeResponse;
   const content = data.content?.find((item) => item.text)?.text;
   if (!content) {
     throw new Error('Claude response did not include content.');
   }
 
   return extractJSON(content);
+}
+
+async function callCopilotPlanOpenAICompatible(
+  command: string,
+  context: CopilotCommandContext,
+  apiKey: string,
+  provider: ByokProvider,
+): Promise<CopilotPlanResult> {
+  const providerLabel = getProviderLabel(provider);
+  const data = await postOpenAICompatible(
+    provider,
+    apiKey,
+    {
+      model: getConfiguredModel(provider, 'text'),
+      messages: [
+        { role: 'system', content: COPILOT_SYSTEM_PROMPT },
+        { role: 'user', content: buildCopilotPrompt(command, context) },
+      ],
+      temperature: 0.2,
+      response_format: { type: 'json_object' },
+    },
+    'copilot',
+  );
+
+  const content = data.choices?.[0]?.message?.content;
+  if (!content) {
+    throw new Error(`${providerLabel} response did not include content.`);
+  }
+
+  return extractCopilotPlanJSON(content);
+}
+
+async function callCopilotPlanClaude(
+  command: string,
+  context: CopilotCommandContext,
+  apiKey: string,
+): Promise<CopilotPlanResult> {
+  const data = await postClaude(
+    apiKey,
+    {
+      model: getConfiguredModel('claude', 'text'),
+      max_tokens: 1024,
+      system: COPILOT_SYSTEM_PROMPT,
+      messages: [
+        {
+          role: 'user',
+          content: buildCopilotPrompt(command, context),
+        },
+      ],
+      temperature: 0.2,
+    },
+    'copilot',
+  );
+
+  const content = data.content?.find((item) => item.text)?.text;
+  if (!content) {
+    throw new Error('Claude response did not include content.');
+  }
+
+  return extractCopilotPlanJSON(content);
 }
 
 function normalizeImageDataUrl(base64Image: string): string {
@@ -430,7 +660,7 @@ function toClaudeImageSource(base64Image: string): {
   };
 }
 
-function parseScheduleJSON(content: string, providerLabel: string): unknown {
+function parseScheduleJSON(content: string, providerLabel: string): ScheduleExtractionResult {
   const parsed =
     tryParseJSON(content) ??
     tryParseCodeBlockJSON(content) ??
@@ -440,26 +670,79 @@ function parseScheduleJSON(content: string, providerLabel: string): unknown {
     throw new Error(`${providerLabel} vision response did not contain valid JSON.`);
   }
 
-  return parsed;
+  return normalizeScheduleExtraction(parsed, providerLabel);
+}
+
+function normalizeScheduleExtraction(
+  raw: unknown,
+  providerLabel: string,
+): ScheduleExtractionResult {
+  if (!isRecord(raw) || !Array.isArray(raw.courses)) {
+    throw new Error(`${providerLabel} vision response must include a courses array.`);
+  }
+
+  return {
+    courses: raw.courses
+      .map((item) => normalizeScheduleCourse(item))
+      .filter((item): item is ScheduleCourse => item !== null),
+  };
+}
+
+function normalizeScheduleCourse(raw: unknown): ScheduleCourse | null {
+  if (!isRecord(raw)) return null;
+
+  const title = getOptionalString(raw.title) ?? getOptionalString(raw.name);
+  const dayOfWeek = normalizeDayOfWeek(raw.dayOfWeek ?? raw.day_of_week);
+  const startPeriod = normalizePeriod(raw.startPeriod ?? raw.start_period);
+  const endPeriod = normalizePeriod(raw.endPeriod ?? raw.end_period);
+
+  if (!title || dayOfWeek === null || startPeriod === null || endPeriod === null) {
+    return null;
+  }
+
+  const location = getOptionalString(raw.location);
+  const teacher = getOptionalString(raw.teacher);
+
+  return {
+    title,
+    dayOfWeek,
+    startPeriod: Math.min(startPeriod, endPeriod),
+    endPeriod: Math.max(startPeriod, endPeriod),
+    ...(location ? { location } : {}),
+    ...(teacher ? { teacher } : {}),
+  };
+}
+
+function getOptionalString(value: unknown): string | undefined {
+  return typeof value === 'string' && value.trim() ? value.trim() : undefined;
+}
+
+function normalizeDayOfWeek(value: unknown): number | null {
+  if (typeof value === 'number' && Number.isInteger(value) && value >= 1 && value <= 7) {
+    return value;
+  }
+
+  if (typeof value === 'string' && value.trim()) {
+    const parsed = Number(value);
+    if (Number.isInteger(parsed) && parsed >= 1 && parsed <= 7) {
+      return parsed;
+    }
+  }
+
+  return null;
 }
 
 async function extractScheduleWithOpenAICompatible(
   base64Image: string,
   apiKey: string,
   provider: ByokProvider,
-): Promise<unknown> {
-  const baseUrl = getConfiguredBaseUrl(provider);
-  const url = buildChatCompletionsUrl(baseUrl);
+): Promise<ScheduleExtractionResult> {
   const providerLabel = getProviderLabel(provider);
   const imageUrl = normalizeImageDataUrl(base64Image);
-
-  const res = await fetch(url, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${apiKey}`,
-    },
-    body: JSON.stringify({
+  const data = await postOpenAICompatible(
+    provider,
+    apiKey,
+    {
       model: getConfiguredModel(provider, 'vision'),
       response_format: { type: 'json_object' },
       messages: [
@@ -480,15 +763,10 @@ async function extractScheduleWithOpenAICompatible(
           ],
         },
       ],
-    }),
-  });
+    },
+    'vision',
+  );
 
-  if (!res.ok) {
-    const err = await res.text();
-    throw new Error(`${providerLabel} vision API error (${res.status}): ${err}`);
-  }
-
-  const data = (await res.json()) as OpenAICompatibleResponse;
   const content = data.choices?.[0]?.message?.content;
   if (!content) {
     throw new Error(`${providerLabel} vision response did not include content.`);
@@ -500,18 +778,11 @@ async function extractScheduleWithOpenAICompatible(
 async function extractScheduleWithClaude(
   base64Image: string,
   apiKey: string,
-): Promise<unknown> {
-  const url = buildClaudeMessagesUrl(getConfiguredBaseUrl('claude'));
+): Promise<ScheduleExtractionResult> {
   const image = toClaudeImageSource(base64Image);
-
-  const res = await fetch(url, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'x-api-key': apiKey,
-      'anthropic-version': '2023-06-01',
-    },
-    body: JSON.stringify({
+  const data = await postClaude(
+    apiKey,
+    {
       model: getConfiguredModel('claude', 'vision'),
       max_tokens: 2048,
       system: SCHEDULE_SYSTEM_PROMPT,
@@ -532,15 +803,10 @@ async function extractScheduleWithClaude(
         },
       ],
       temperature: 0.1,
-    }),
-  });
+    },
+    'vision',
+  );
 
-  if (!res.ok) {
-    const err = await res.text();
-    throw new Error(`Claude vision API error (${res.status}): ${err}`);
-  }
-
-  const data = (await res.json()) as ClaudeResponse;
   const content = data.content?.find((item) => item.text)?.text;
   if (!content) {
     throw new Error('Claude vision response did not include content.');
@@ -549,7 +815,9 @@ async function extractScheduleWithClaude(
   return parseScheduleJSON(content, 'Claude');
 }
 
-export async function extractScheduleFromImage(base64Image: string): Promise<any> {
+export async function extractScheduleFromImage(
+  base64Image: string,
+): Promise<ScheduleExtractionResult> {
   const provider = getConfiguredProvider();
   const apiKey = getByokApiKey(provider);
 
@@ -582,8 +850,32 @@ export async function streamTaskBreakdown(
   return callOpenAICompatible(parentTaskTitle, freeSlotsMap, apiKey, provider);
 }
 
+export async function planCopilotCommand(
+  command: string,
+  context: CopilotCommandContext,
+): Promise<CopilotPlanResult> {
+  const provider = getConfiguredProvider();
+  const apiKey = getByokApiKey(provider);
+
+  if (!apiKey) {
+    throw new Error(`No ${getProviderLabel(provider)} API key found. Configure BYOK in Settings.`);
+  }
+
+  if (provider === 'claude') {
+    return callCopilotPlanClaude(command, context, apiKey);
+  }
+
+  return callCopilotPlanOpenAICompatible(command, context, apiKey, provider);
+}
+
 export function isAIConfigured(): boolean {
   return getByokApiKey(getConfiguredProvider()) !== null;
 }
 
-export type { ScheduledSubTask, TaskBreakdownResult } from './ByokConnector.types';
+export type {
+  CopilotAction,
+  CopilotCommandContext,
+  CopilotPlanResult,
+  ScheduledSubTask,
+  TaskBreakdownResult,
+} from './ByokConnector.types';

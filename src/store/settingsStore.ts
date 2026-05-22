@@ -10,7 +10,7 @@
  */
 
 import { create } from 'zustand';
-import { getDatabase } from '@/db/database';
+import { getDatabase, withImmediateTransaction } from '@/db/database';
 import { DEFAULT_ACTIVE_MODULES } from '@/config/modules';
 import {
   storage,
@@ -216,7 +216,7 @@ export const useSettingsStore = create<SettingsState>((set) => ({
     try {
       // 1. 清空 SQLite 所有表（按外键依赖正序删除，配合 ON DELETE CASCADE 双重保险）
       const db = await getDatabase();
-      await db.withTransactionAsync(async () => {
+      await withImmediateTransaction(db, async () => {
         await db.runAsync('DELETE FROM task_nodes');
         await db.runAsync('DELETE FROM course_schedules');
         await db.runAsync('DELETE FROM courses');

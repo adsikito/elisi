@@ -59,6 +59,21 @@ interface TaskItemProps {
   onToggleStatus: (id: string) => void | Promise<void>;
 }
 
+function runDeferredCommit(
+  work: () => void | Promise<void>,
+  onSettled: () => void,
+  label: string,
+): void {
+  InteractionManager.runAfterInteractions(() => {
+    void Promise.resolve()
+      .then(work)
+      .catch((error) => {
+        console.warn(`[TaskItem] ${label} failed:`, error);
+      })
+      .finally(onSettled);
+  });
+}
+
 const AIBreathingDot: React.FC = () => {
   const progress = useSharedValue(0);
 
@@ -198,9 +213,11 @@ const TaskItem: React.FC<TaskItemProps> = ({
 
   const commitToggleStatus = useCallback(
     (id: string) => {
-      InteractionManager.runAfterInteractions(() => {
-        void Promise.resolve(onToggleStatus(id)).finally(resetStatusCommit);
-      });
+      runDeferredCommit(
+        () => onToggleStatus(id),
+        resetStatusCommit,
+        'toggle status',
+      );
     },
     [onToggleStatus, resetStatusCommit],
   );
@@ -237,9 +254,11 @@ const TaskItem: React.FC<TaskItemProps> = ({
 
   const commitDecomposeTask = useCallback(
     (id: string) => {
-      InteractionManager.runAfterInteractions(() => {
-        void Promise.resolve(decomposeTask(id)).finally(resetDecomposeCommit);
-      });
+      runDeferredCommit(
+        () => decomposeTask(id),
+        resetDecomposeCommit,
+        'decompose task',
+      );
     },
     [decomposeTask, resetDecomposeCommit],
   );

@@ -54,6 +54,15 @@ const PROVIDER_OPTIONS: Array<{ label: string; value: ByokProvider }> = [
   { label: '自定义', value: 'custom' },
 ];
 
+const API_KEY_URLS: Record<ByokProvider, string> = {
+  openai: 'https://platform.openai.com/api-keys',
+  claude: 'https://console.anthropic.com/settings/keys',
+  deepseek: 'https://platform.deepseek.com/sign_in',
+  custom: 'https://platform.openai.com/api-keys',
+};
+
+const PROXY_KEY_URL = 'https://github.com/chatanywhere/GPT_API_free';
+
 const SettingsScreen: React.FC = () => {
   const insets = useSafeAreaInsets();
 
@@ -116,22 +125,16 @@ const SettingsScreen: React.FC = () => {
   };
 
   const openApiKeyUrl = useCallback(() => {
-    const url =
-      providerText === 'deepseek'
-        ? 'https://platform.deepseek.com/'
-        : 'https://platform.openai.com/api-keys';
-
-    Linking.openURL(url).catch(() => {
+    Linking.openURL(API_KEY_URLS[providerText]).catch(() => {
       Alert.alert('打开失败', '请稍后重试');
     });
   }, [providerText]);
 
-  const apiKeyLinkText =
-    providerText === 'deepseek'
-      ? '(https://platform.deepseek.com/)'
-      : providerText === 'openai'
-        ? '点击这里去 OpenAI 官网申请'
-        : '';
+  const openProxyKeyUrl = useCallback(() => {
+    Linking.openURL(PROXY_KEY_URL).catch(() => {
+      Alert.alert('打开失败', '请稍后重试');
+    });
+  }, []);
 
   // ── 清空所有数据 ──
   const handleClear = () => {
@@ -334,15 +337,6 @@ const SettingsScreen: React.FC = () => {
             onFocus={() => setKeyFocused(true)}
             onBlur={() => setKeyFocused(false)}
           />
-          {apiKeyLinkText ? (
-            <Text
-              style={styles.apiKeyLink}
-              onPress={openApiKeyUrl}
-              accessibilityRole="link"
-            >
-              {apiKeyLinkText}
-            </Text>
-          ) : null}
 
           <Text style={[styles.fieldLabel, { marginTop: 16 }]}>API 代理 Base URL</Text>
           <TextInput
@@ -360,6 +354,24 @@ const SettingsScreen: React.FC = () => {
             onFocus={() => setBaseUrlFocused(true)}
             onBlur={() => setBaseUrlFocused(false)}
           />
+          <View style={styles.apiHelpRow}>
+            <Text style={styles.apiHelpPrefix}>没有 API 密钥？</Text>
+            <Text
+              style={styles.apiHelpLink}
+              onPress={openApiKeyUrl}
+              accessibilityRole="link"
+            >
+              点击获取密钥申请地址
+            </Text>
+            <Text style={styles.apiHelpDivider}>·</Text>
+            <Text
+              style={styles.apiHelpLink}
+              onPress={openProxyKeyUrl}
+              accessibilityRole="link"
+            >
+              申请中转 Key
+            </Text>
+          </View>
 
           <Text style={[styles.fieldLabel, { marginTop: 16 }]}>模型</Text>
           <TextInput
@@ -580,11 +592,34 @@ const styles = StyleSheet.create({
     borderColor: COLORS.borderFocus,
     backgroundColor: COLORS.accentLight,
   },
-  apiKeyLink: {
-    marginTop: 8,
+  apiHelpRow: {
+    marginTop: 10,
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    alignItems: 'center',
+    gap: 6,
+    backgroundColor: COLORS.warningLight,
+    borderRadius: 12,
+    borderWidth: 1.5,
+    borderColor: '#FFD7A8',
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+  },
+  apiHelpPrefix: {
     fontSize: 12,
-    color: COLORS.accent,
-    lineHeight: 18,
+    fontWeight: '800',
+    color: COLORS.warningText,
+  },
+  apiHelpLink: {
+    fontSize: 12,
+    fontWeight: '800',
+    color: '#7B4F9D',
+    textDecorationLine: 'underline',
+  },
+  apiHelpDivider: {
+    fontSize: 12,
+    fontWeight: '800',
+    color: COLORS.warningText,
   },
 
   // ── Save button ──

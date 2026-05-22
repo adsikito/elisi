@@ -15,26 +15,32 @@ import { Ionicons } from '@expo/vector-icons';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import {
   isAIConfigured,
-  streamTaskBreakdown,
-  type ScheduledSubTask,
+  planCopilotCommand,
+  type CopilotAction,
+  type CopilotPlanResult,
 } from '@/ai/ByokConnector';
-import { createTask } from '@/db';
+import { createTask, moveTasksByDate } from '@/db';
 import { useGridStore } from '@/store/gridStore';
 import { useTaskStore } from '@/store/taskStore';
 
 const COLORS = {
-  bg: '#FAFAFA',
-  card: '#FFFFFF',
-  title: '#3D3D4E',
-  sub: '#9E9EB0',
-  accent: '#C1B3F0',
-  accentStrong: '#8F73C8',
-  userBubble: '#EDE8FD',
-  aiBubble: '#F1F1F4',
-  border: '#ECECF0',
+  bg: '#FFF9FB',
+  panel: '#FFFFFF',
+  title: '#333042',
+  sub: '#928A9E',
+  border: '#EFE4EE',
+  lavender: '#EEE8FF',
+  lavenderInk: '#8065B8',
+  mint: '#DFF8F0',
+  mintInk: '#2E8E72',
+  peach: '#FFE9DC',
+  peachInk: '#B86144',
+  sky: '#DDF4FF',
+  skyInk: '#2B7EA7',
+  rose: '#FFE7EF',
+  roseInk: '#C35C7B',
   input: '#FFFDFE',
-  placeholder: '#B8A9C8',
-  danger: '#D96363',
+  disabled: '#D8D0E7',
 };
 
 type ChatRole = 'user' | 'assistant';
@@ -43,7 +49,7 @@ interface ChatMessage {
   id: string;
   role: ChatRole;
   text: string;
-  suggestions?: ScheduledSubTask[];
+  plan?: CopilotPlanResult;
   isLoading?: boolean;
   applied?: boolean;
 }
@@ -51,54 +57,66 @@ interface ChatMessage {
 const WELCOME_MESSAGE: ChatMessage = {
   id: 'welcome',
   role: 'assistant',
-  text: '你好，我在。把想安排、拆解或调整的事发给我就好。',
+  text: '你好，我在。',
 };
 
 function makeMessageId(prefix: string): string {
   return `${prefix}-${Date.now()}-${Math.random().toString(16).slice(2)}`;
 }
 
-function buildTaskDescription(subTask: ScheduledSubTask): string {
-  const details: string[] = ['AI Copilot 建议'];
-
-  if (subTask.target_date) {
-    details.push(subTask.target_date);
-  }
-
-  if (typeof subTask.start_period === 'number') {
-    details.push(`第${subTask.start_period}节`);
-  }
-
-  details.push(`${subTask.duration_minutes}min`);
-  return details.join(' · ');
+function addDays(date: Date, days: number): Date {
+  const next = new Date(date);
+  next.setDate(next.getDate() + days);
+  return next;
 }
 
-function formatSuggestionLine(subTask: ScheduledSubTask, index: number): string {
-  const parts = [`${index + 1}. ${subTask.title}`];
+function formatLocalDate(date: Date): string {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+}
 
-  if (subTask.target_date) {
-    parts.push(subTask.target_date);
+function buildTaskDescription(action: Extract<CopilotAction, { type: 'create_task' }>): string | undefined {
+  const parts = [action.description?.trim()].filter(Boolean) as string[];
+
+  if (typeof action.start_period === 'number') {
+    parts.push(`第${action.start_period}节`);
   }
 
-  if (typeof subTask.start_period === 'number') {
-    parts.push(`第${subTask.start_period}节`);
+  if (typeof action.duration_minutes === 'number') {
+    parts.push(`${action.duration_minutes}min`);
   }
 
-  parts.push(`${subTask.duration_minutes}min`);
+  return parts.length > 0 ? parts.join(' · ') : undefined;
+}
+
+function describeAction(action: CopilotAction): string {
+  if (action.type === 'move_tasks_by_date') {
+    return `将 ${action.from_date} 的任务推迟到 ${action.to_date}`;
+  }
+
+  const parts = [`新增：${action.title}`];
+  if (action.due_date) {
+    parts.push(action.due_date);
+  }
+  if (typeof action.start_period === 'number') {
+    parts.push(`第${action.start_period}节`);
+  }
   return parts.join(' · ');
 }
 
-function buildAssistantText(suggestions: ScheduledSubTask[]): string {
-  if (suggestions.length === 0) {
-    return '我暂时没有拆出可直接应用的待办，可以换一种说法再试一次。';
+function buildAssistantText(plan: CopilotPlanResult): string {
+  if (plan.actions.length === 0) {
+    return plan.summary || '我还没有形成可应用的建议。';
   }
 
-  return ['我整理出这些建议：', ...suggestions.map(formatSuggestionLine)].join('\n');
+  return plan.summary || '我整理好了建议。';
 }
 
 function getErrorMessage(error: unknown): string {
   if (error instanceof Error && error.message.trim()) {
-    if (error.message.includes('No AI API key') || error.message.includes('API key')) {
+    if (error.message.includes('No ') || error.message.includes('API key')) {
       return '还没有配置 AI 密钥。去设置页保存 BYOK 配置后，我就可以开始处理。';
     }
     return error.message;
@@ -108,9 +126,9 @@ function getErrorMessage(error: unknown): string {
 }
 
 function TypingDots() {
-  const dot1 = useRef(new Animated.Value(0.32)).current;
-  const dot2 = useRef(new Animated.Value(0.32)).current;
-  const dot3 = useRef(new Animated.Value(0.32)).current;
+  const dot1 = useRef(new Animated.Value(0.35)).current;
+  const dot2 = useRef(new Animated.Value(0.35)).current;
+  const dot3 = useRef(new Animated.Value(0.35)).current;
 
   useEffect(() => {
     const createDotAnimation = (value: Animated.Value, delay: number) =>
@@ -123,11 +141,11 @@ function TypingDots() {
             useNativeDriver: true,
           }),
           Animated.timing(value, {
-            toValue: 0.32,
+            toValue: 0.35,
             duration: 260,
             useNativeDriver: true,
           }),
-          Animated.delay(260),
+          Animated.delay(240),
         ]),
       );
 
@@ -153,7 +171,7 @@ function TypingDots() {
               transform: [
                 {
                   translateY: opacity.interpolate({
-                    inputRange: [0.32, 1],
+                    inputRange: [0.35, 1],
                     outputRange: [0, -3],
                   }),
                 },
@@ -169,6 +187,7 @@ function TypingDots() {
 export default function CopilotScreen() {
   const insets = useSafeAreaInsets();
   const listRef = useRef<FlatList<ChatMessage>>(null);
+  const currentWeek = useGridStore((s) => s.currentWeek);
 
   const [messages, setMessages] = useState<ChatMessage[]>([WELCOME_MESSAGE]);
   const [input, setInput] = useState('');
@@ -187,27 +206,43 @@ export default function CopilotScreen() {
     scrollToEnd();
   }, [messages, scrollToEnd]);
 
-  const applySuggestions = useCallback(async (message: ChatMessage) => {
-    const suggestions = message.suggestions ?? [];
-    if (suggestions.length === 0 || applyingMessageId) return;
+  const applyPlan = useCallback(async (message: ChatMessage) => {
+    const actions = message.plan?.actions ?? [];
+    if (actions.length === 0 || applyingMessageId) return;
 
     setApplyingMessageId(message.id);
     try {
-      for (const subTask of suggestions) {
-        const title = subTask.title.trim();
-        if (!title) continue;
+      let createdCount = 0;
+      let movedCount = 0;
 
-        await createTask({
-          title,
-          description: buildTaskDescription(subTask),
-          due_date: subTask.target_date ?? null,
-          priority: 1,
-          status: 'pending',
-        });
+      for (const action of actions) {
+        if (action.type === 'create_task') {
+          const title = action.title.trim();
+          if (!title) continue;
+
+          await createTask({
+            title,
+            description: buildTaskDescription(action),
+            due_date: action.due_date ?? null,
+            priority: action.priority ?? 1,
+            status: 'pending',
+          });
+          createdCount += 1;
+          continue;
+        }
+
+        movedCount += await moveTasksByDate(action.from_date, action.to_date);
       }
 
       await useTaskStore.getState().loadRootTasks();
       useGridStore.getState().forceRefreshGrid();
+
+      const resultText = [
+        createdCount > 0 ? `新增 ${createdCount} 个任务` : null,
+        movedCount > 0 ? `移动 ${movedCount} 个任务` : null,
+      ]
+        .filter(Boolean)
+        .join('，');
 
       setMessages((current) =>
         current.map((item) =>
@@ -215,7 +250,7 @@ export default function CopilotScreen() {
             ? {
                 ...item,
                 applied: true,
-                text: `${item.text}\n\n已应用到我的待办。`,
+                text: `${item.text}\n\n已应用${resultText ? `：${resultText}` : '。'}`,
               }
             : item,
         ),
@@ -238,6 +273,12 @@ export default function CopilotScreen() {
     const trimmed = input.trim();
     if (!trimmed || isSending) return;
 
+    const today = new Date();
+    const context = {
+      today: formatLocalDate(today),
+      tomorrow: formatLocalDate(addDays(today, 1)),
+      current_week: currentWeek,
+    };
     const userMessage: ChatMessage = {
       id: makeMessageId('user'),
       role: 'user',
@@ -263,8 +304,7 @@ export default function CopilotScreen() {
         throw new Error('No AI API key found.');
       }
 
-      const result = await streamTaskBreakdown(trimmed);
-      const suggestions = Array.isArray(result.sub_tasks) ? result.sub_tasks : [];
+      const plan = await planCopilotCommand(trimmed, context);
 
       setMessages((current) =>
         current.map((message) =>
@@ -272,8 +312,8 @@ export default function CopilotScreen() {
             ? {
                 id: makeMessageId('assistant'),
                 role: 'assistant',
-                text: buildAssistantText(suggestions),
-                suggestions,
+                text: buildAssistantText(plan),
+                plan,
               }
             : message,
         ),
@@ -293,17 +333,13 @@ export default function CopilotScreen() {
     } finally {
       setIsSending(false);
     }
-  }, [input, isSending]);
+  }, [currentWeek, input, isSending]);
 
   const renderMessage = useCallback(
     ({ item }: { item: ChatMessage }) => {
       const isUser = item.role === 'user';
-      const canApply =
-        !isUser &&
-        !item.isLoading &&
-        !item.applied &&
-        Array.isArray(item.suggestions) &&
-        item.suggestions.length > 0;
+      const actions = item.plan?.actions ?? [];
+      const canApply = !isUser && !item.isLoading && !item.applied && actions.length > 0;
       const isApplying = applyingMessageId === item.id;
 
       return (
@@ -315,7 +351,7 @@ export default function CopilotScreen() {
         >
           {!isUser ? (
             <View style={styles.avatar}>
-              <Ionicons name="sparkles-outline" size={16} color={COLORS.accentStrong} />
+              <Ionicons name="sparkles-outline" size={16} color={COLORS.skyInk} />
             </View>
           ) : null}
 
@@ -328,9 +364,24 @@ export default function CopilotScreen() {
             <Text style={styles.messageText}>{item.text}</Text>
             {item.isLoading ? <TypingDots /> : null}
 
+            {actions.length > 0 ? (
+              <View style={styles.actionList}>
+                {actions.map((action, index) => (
+                  <View key={`${item.id}-${index}`} style={styles.actionPill}>
+                    <Ionicons
+                      name={action.type === 'move_tasks_by_date' ? 'calendar-outline' : 'add-circle-outline'}
+                      size={15}
+                      color={action.type === 'move_tasks_by_date' ? COLORS.skyInk : COLORS.mintInk}
+                    />
+                    <Text style={styles.actionText}>{describeAction(action)}</Text>
+                  </View>
+                ))}
+              </View>
+            ) : null}
+
             {canApply ? (
               <Pressable
-                onPress={() => applySuggestions(item)}
+                onPress={() => applyPlan(item)}
                 disabled={isApplying}
                 style={({ pressed }) => [
                   styles.applyButton,
@@ -346,7 +397,7 @@ export default function CopilotScreen() {
                   <Ionicons name="checkmark-done-outline" size={16} color="#FFFFFF" />
                 )}
                 <Text style={styles.applyButtonText}>
-                  {isApplying ? '应用中' : '一键应用到我的日程/待办'}
+                  {isApplying ? '应用中' : '一键应用'}
                 </Text>
               </Pressable>
             ) : null}
@@ -354,16 +405,11 @@ export default function CopilotScreen() {
         </View>
       );
     },
-    [applyingMessageId, applySuggestions],
+    [applyingMessageId, applyPlan],
   );
 
   const listContentStyle = useMemo(
-    () => [
-      styles.listContent,
-      {
-        paddingBottom: 24,
-      },
-    ],
+    () => [styles.listContent, { paddingBottom: 22 }],
     [],
   );
 
@@ -376,12 +422,23 @@ export default function CopilotScreen() {
       >
         <View style={styles.header}>
           <View style={styles.headerIcon}>
-            <Ionicons name="sparkles-outline" size={20} color={COLORS.accentStrong} />
+            <Ionicons name="sparkles-outline" size={21} color={COLORS.skyInk} />
           </View>
           <View style={styles.headerCopy}>
-            <Text style={styles.headerTitle}>MyBrain 智能助理</Text>
-            <Text style={styles.headerSub}>AI Copilot</Text>
+            <Text style={styles.headerTitle}>助手</Text>
+            <Text style={styles.headerSub}>MyBrain Copilot</Text>
           </View>
+          <View style={styles.statusPill}>
+            <View style={styles.statusDot} />
+            <Text style={styles.statusText}>BYOK</Text>
+          </View>
+        </View>
+
+        <View style={styles.paletteStrip}>
+          <View style={[styles.paletteCell, { backgroundColor: COLORS.mint }]} />
+          <View style={[styles.paletteCell, { backgroundColor: COLORS.sky }]} />
+          <View style={[styles.paletteCell, { backgroundColor: COLORS.peach }]} />
+          <View style={[styles.paletteCell, { backgroundColor: COLORS.rose }]} />
         </View>
 
         <FlatList
@@ -401,8 +458,8 @@ export default function CopilotScreen() {
             <TextInput
               value={input}
               onChangeText={setInput}
-              placeholder="向助理发消息..."
-              placeholderTextColor={COLORS.placeholder}
+              placeholder="输入指令..."
+              placeholderTextColor="#B8A9C8"
               style={styles.input}
               multiline
               maxLength={500}
@@ -448,29 +505,29 @@ const styles = StyleSheet.create({
     backgroundColor: COLORS.bg,
   },
   header: {
-    minHeight: 72,
-    paddingHorizontal: 20,
+    minHeight: 74,
+    paddingHorizontal: 18,
     paddingTop: 14,
-    paddingBottom: 12,
+    paddingBottom: 10,
     flexDirection: 'row',
     alignItems: 'center',
   },
   headerIcon: {
-    width: 42,
-    height: 42,
-    borderRadius: 14,
+    width: 44,
+    height: 44,
+    borderRadius: 15,
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: COLORS.userBubble,
+    backgroundColor: COLORS.sky,
     borderWidth: 1,
-    borderColor: '#E0D6F7',
+    borderColor: '#BFE7F7',
   },
   headerCopy: {
     marginLeft: 12,
     flex: 1,
   },
   headerTitle: {
-    fontSize: 24,
+    fontSize: 25,
     fontWeight: '800',
     color: COLORS.title,
     letterSpacing: 0,
@@ -478,16 +535,49 @@ const styles = StyleSheet.create({
   headerSub: {
     marginTop: 2,
     fontSize: 12,
-    fontWeight: '600',
+    fontWeight: '700',
     color: COLORS.sub,
     letterSpacing: 0,
+  },
+  statusPill: {
+    minHeight: 32,
+    borderRadius: 14,
+    paddingHorizontal: 10,
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: COLORS.panel,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+  },
+  statusDot: {
+    width: 7,
+    height: 7,
+    borderRadius: 4,
+    marginRight: 6,
+    backgroundColor: COLORS.mintInk,
+  },
+  statusText: {
+    fontSize: 11,
+    fontWeight: '800',
+    color: COLORS.sub,
+    letterSpacing: 0,
+  },
+  paletteStrip: {
+    height: 8,
+    marginHorizontal: 18,
+    borderRadius: 4,
+    flexDirection: 'row',
+    overflow: 'hidden',
+  },
+  paletteCell: {
+    flex: 1,
   },
   list: {
     flex: 1,
   },
   listContent: {
     paddingHorizontal: 16,
-    paddingTop: 8,
+    paddingTop: 18,
   },
   messageRow: {
     marginBottom: 14,
@@ -501,30 +591,30 @@ const styles = StyleSheet.create({
     justifyContent: 'flex-start',
   },
   avatar: {
-    width: 28,
-    height: 28,
-    borderRadius: 10,
+    width: 30,
+    height: 30,
+    borderRadius: 11,
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: COLORS.card,
+    backgroundColor: COLORS.panel,
     borderWidth: 1,
     borderColor: COLORS.border,
     marginRight: 8,
   },
   bubble: {
-    maxWidth: '82%',
+    maxWidth: '84%',
     borderRadius: 18,
     paddingHorizontal: 14,
     paddingVertical: 12,
     borderWidth: 1,
   },
   userBubble: {
-    backgroundColor: COLORS.userBubble,
-    borderColor: '#E0D6F7',
+    backgroundColor: COLORS.lavender,
+    borderColor: '#DDD2FB',
     borderBottomRightRadius: 6,
   },
   assistantBubble: {
-    backgroundColor: COLORS.aiBubble,
+    backgroundColor: COLORS.panel,
     borderColor: COLORS.border,
     borderBottomLeftRadius: 6,
   },
@@ -532,7 +622,7 @@ const styles = StyleSheet.create({
     fontSize: 15,
     lineHeight: 22,
     color: COLORS.title,
-    fontWeight: '500',
+    fontWeight: '600',
     letterSpacing: 0,
   },
   typingDots: {
@@ -546,20 +636,44 @@ const styles = StyleSheet.create({
     height: 6,
     borderRadius: 3,
     marginRight: 5,
-    backgroundColor: COLORS.accentStrong,
+    backgroundColor: COLORS.skyInk,
+  },
+  actionList: {
+    marginTop: 12,
+  },
+  actionPill: {
+    minHeight: 36,
+    borderRadius: 12,
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+    marginTop: 7,
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: COLORS.sky,
+    borderWidth: 1,
+    borderColor: '#BFE7F7',
+  },
+  actionText: {
+    flex: 1,
+    marginLeft: 7,
+    fontSize: 13,
+    lineHeight: 18,
+    fontWeight: '700',
+    color: COLORS.title,
+    letterSpacing: 0,
   },
   applyButton: {
     marginTop: 12,
-    minHeight: 38,
+    minHeight: 40,
     borderRadius: 14,
     paddingHorizontal: 12,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: COLORS.accentStrong,
+    backgroundColor: COLORS.skyInk,
   },
   applyButtonPressed: {
-    opacity: 0.84,
+    opacity: 0.86,
     transform: [{ translateY: 1 }],
   },
   applyButtonDisabled: {
@@ -577,11 +691,11 @@ const styles = StyleSheet.create({
     paddingTop: 12,
     backgroundColor: COLORS.bg,
     borderTopWidth: 1,
-    borderTopColor: '#F0EEF5',
+    borderTopColor: '#F1E7F0',
   },
   composer: {
-    minHeight: 56,
-    maxHeight: 122,
+    minHeight: 58,
+    maxHeight: 126,
     borderRadius: 18,
     paddingLeft: 15,
     paddingRight: 6,
@@ -589,7 +703,7 @@ const styles = StyleSheet.create({
     alignItems: 'flex-end',
     backgroundColor: COLORS.input,
     borderWidth: 1,
-    borderColor: '#E7DDF4',
+    borderColor: COLORS.border,
     ...Platform.select({
       ios: {
         shadowColor: '#8E7AA6',
@@ -598,7 +712,7 @@ const styles = StyleSheet.create({
         shadowRadius: 18,
       },
       android: {
-        elevation: 6,
+        elevation: 7,
       },
     }),
   },
@@ -622,13 +736,13 @@ const styles = StyleSheet.create({
     marginBottom: 6,
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: COLORS.accentStrong,
+    backgroundColor: COLORS.skyInk,
   },
   sendButtonPressed: {
-    opacity: 0.86,
+    opacity: 0.88,
     transform: [{ translateY: 1 }],
   },
   sendButtonDisabled: {
-    backgroundColor: '#D8D0E7',
+    backgroundColor: COLORS.disabled,
   },
 });

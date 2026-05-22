@@ -56,6 +56,7 @@ export {
   getChildTasks,
   getChildTasksWithCount,
   updateTaskStatus,
+  moveTasksByDate,
   deleteTask,
   getCourseStats,
 } from './queries';
