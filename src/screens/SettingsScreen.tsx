@@ -333,7 +333,7 @@ const SettingsScreen: React.FC = () => {
             ]}
             value={baseUrlText}
             onChangeText={setBaseUrlText}
-            placeholder=""
+            placeholder={DEFAULT_BYOK_BASE_URL}
             placeholderTextColor={COLORS.placeholder}
             autoCapitalize="none"
             autoCorrect={false}
@@ -348,8 +348,9 @@ const SettingsScreen: React.FC = () => {
               onPress={openProxyKeyUrl}
               accessibilityRole="link"
             >
-              点击 申请中转 Key
+              点击获取密钥申请地址
             </Text>
+            <Text style={styles.apiHelpDivider}>申请中转 Key</Text>
           </View>
 
           <Text style={[styles.fieldLabel, { marginTop: 16 }]}>模型</Text>

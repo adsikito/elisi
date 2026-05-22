@@ -35,6 +35,7 @@ const INDENT_UNIT = 24;
 const SWIPE_WIDTH = 80;
 const SWIPE_OPEN_OFFSET = -SWIPE_WIDTH;
 const SWIPE_THRESHOLD = 80;
+const HORIZONTAL_ACTIVE_OFFSET: [number, number] = [-20, 20];
 
 const CARD_SPRING = {
   damping: 18,
@@ -59,7 +60,7 @@ interface TaskItemProps {
   onToggleStatus: (id: string) => void | Promise<void>;
 }
 
-function runDeferredCommit(
+function runAfterAnimationCommit(
   work: () => void | Promise<void>,
   onSettled: () => void,
   label: string,
@@ -184,8 +185,7 @@ const TaskItem: React.FC<TaskItemProps> = ({
     () =>
       Gesture.Pan()
         .enabled(!isActive)
-        .activeOffsetX([-20, 20])
-        .failOffsetY([-10, 10])
+        .activeOffsetX(HORIZONTAL_ACTIVE_OFFSET)
         .onBegin(() => {
           gestureStartX.value = translateX.value;
         })
@@ -213,7 +213,7 @@ const TaskItem: React.FC<TaskItemProps> = ({
 
   const commitToggleStatus = useCallback(
     (id: string) => {
-      runDeferredCommit(
+      runAfterAnimationCommit(
         () => onToggleStatus(id),
         resetStatusCommit,
         'toggle status',
@@ -254,7 +254,7 @@ const TaskItem: React.FC<TaskItemProps> = ({
 
   const commitDecomposeTask = useCallback(
     (id: string) => {
-      runDeferredCommit(
+      runAfterAnimationCommit(
         () => decomposeTask(id),
         resetDecomposeCommit,
         'decompose task',

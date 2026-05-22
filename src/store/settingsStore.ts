@@ -50,11 +50,10 @@ function getInitialSemesterStartDate(): string {
 export type ByokProvider = 'openai' | 'claude' | 'deepseek' | 'custom';
 
 export const DEFAULT_BYOK_PROVIDER: ByokProvider = 'openai';
-export const DEFAULT_BYOK_BASE_URL = '';
+export const DEFAULT_BYOK_BASE_URL = 'https://api.openai.com';
 export const DEEPSEEK_BYOK_BASE_URL = 'https://api.deepseek.com/v1';
 export const DEEPSEEK_BYOK_MODEL = 'deepseek-chat';
 const ACTIVE_MODULES_STORAGE_KEY = 'active_modules';
-const LEGACY_DEFAULT_BYOK_BASE_URL = 'https://api.openai.com';
 
 function normalizeByokProvider(value: string | undefined): ByokProvider {
   return value === 'openai' ||
@@ -66,8 +65,8 @@ function normalizeByokProvider(value: string | undefined): ByokProvider {
 }
 
 function normalizeByokBaseUrl(value: string | undefined): string {
-  const trimmed = (value ?? DEFAULT_BYOK_BASE_URL).trim();
-  return trimmed === LEGACY_DEFAULT_BYOK_BASE_URL ? DEFAULT_BYOK_BASE_URL : trimmed;
+  const trimmed = value?.trim();
+  return trimmed || DEFAULT_BYOK_BASE_URL;
 }
 
 function getInitialByokBaseUrl(): string {

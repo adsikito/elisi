@@ -743,6 +743,8 @@ const TheGrid: React.FC = () => {
                         width: COL_WIDTH,
                         top: 0,
                         bottom: 0,
+                        zIndex: 20,
+                        elevation: 4,
                       }}
                       pointerEvents="box-none"
                     >
@@ -758,6 +760,8 @@ const TheGrid: React.FC = () => {
                               left: 0,
                               right: 0,
                               height: periodLayout.height,
+                              zIndex: 20,
+                              elevation: 4,
                             }}
                           >
                             <TaskSlotBlock
@@ -793,6 +797,7 @@ const TheGrid: React.FC = () => {
                           width: COL_WIDTH,
                           top: spanLayout.top,
                           height: spanLayout.height,
+                          zIndex: 10,
                         }}
                       >
                         <CourseBlock
