@@ -40,12 +40,11 @@ const QuickAddInput: React.FC<QuickAddInputProps> = ({ bottomInset }) => {
   const canSubmit = text.trim().length > 0 && !isSubmitting;
 
   const handleSubmitTask = useCallback(async () => {
-    const trimmed = text.trim();
-    if (!trimmed || isSubmitting) return;
+    if (!text.trim() || isSubmitting) return;
 
     setIsSubmitting(true);
     try {
-      await useTaskStore.getState().createTask({ title: trimmed });
+      await useTaskStore.getState().createTask({ title: text.trim() });
       setText('');
     } catch (error) {
       console.warn('[TaskListScreen] quick create failed:', error);
@@ -63,10 +62,6 @@ const QuickAddInput: React.FC<QuickAddInputProps> = ({ bottomInset }) => {
       </View>
 
       <View style={styles.composerBar}>
-        <View style={styles.leadingIcon}>
-          <Ionicons name="flash-outline" size={17} color={COLORS.accentStrong} />
-        </View>
-
         <TextInput
           value={text}
           onChangeText={setText}
@@ -314,7 +309,7 @@ const styles = StyleSheet.create({
   composerBar: {
     minHeight: 58,
     borderRadius: 18,
-    paddingLeft: 10,
+    paddingLeft: 14,
     paddingRight: 6,
     flexDirection: 'row',
     alignItems: 'center',
@@ -327,19 +322,11 @@ const styles = StyleSheet.create({
     shadowOffset: { width: 0, height: 8 },
     elevation: 10,
   },
-  leadingIcon: {
-    width: 34,
-    height: 34,
-    borderRadius: 12,
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: COLORS.accentSoft,
-  },
   composerInput: {
     flex: 1,
     minHeight: 48,
     paddingVertical: 10,
-    paddingHorizontal: 12,
+    paddingRight: 12,
     fontSize: 15,
     fontWeight: '600',
     color: COLORS.title,

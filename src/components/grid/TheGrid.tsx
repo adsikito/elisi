@@ -603,12 +603,6 @@ const TheGrid: React.FC = () => {
     return grouped;
   }, [courses]);
 
-  const tasksByDay = useMemo(() => {
-    const grouped = new Map<number, TaskNodeExtended[]>();
-    for (let d = 1; d <= 7; d += 1) grouped.set(d, dayTasks[d] ?? []);
-    return grouped;
-  }, [dayTasks]);
-
   const isWeekEmpty =
     courses.length === 0 && Object.values(dayTasks).every((items) => items.length === 0);
 
@@ -729,8 +723,9 @@ const TheGrid: React.FC = () => {
 
                 <GridGuides slots={metrics.slots} bodyHeight={metrics.bodyHeight} />
 
-                {Array.from({ length: 7 }, (_, i) => i + 1).map((day) => {
-                  const dayItems = tasksByDay.get(day) ?? [];
+                {Array.from({ length: 7 }, (_, dayIndex) => {
+                  const day = dayIndex + 1;
+                  const dayItems = dayTasks[dayIndex + 1] ?? [];
                   const dayCourses = coursesByDay.get(day) ?? [];
                   const leftOffset = (day - 1) * COL_WIDTH;
 

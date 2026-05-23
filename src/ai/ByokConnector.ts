@@ -141,9 +141,7 @@ function getByokApiKey(provider: ByokProvider): string | null {
 }
 
 function getConfiguredBaseUrl(provider: ByokProvider): string | null {
-  const baseUrl =
-    getTrimmedValue(storage.getString('byok_base_url')) ??
-    getTrimmedValue(useSettingsStore.getState().byokBaseUrl);
+  const baseUrl = getTrimmedValue(useSettingsStore.getState().byokBaseUrl);
 
   if (provider === 'deepseek' && (!baseUrl || baseUrl === DEFAULT_BYOK_BASE_URL)) {
     return DEEPSEEK_BYOK_BASE_URL;

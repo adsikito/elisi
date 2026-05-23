@@ -347,10 +347,9 @@ const SettingsScreen: React.FC = () => {
               style={styles.apiHelpLink}
               onPress={openProxyKeyUrl}
               accessibilityRole="link"
-            >
-              点击获取密钥申请地址
-            </Text>
-            <Text style={styles.apiHelpDivider}>申请中转 Key</Text>
+          >
+            点击获取密钥申请地址
+          </Text>
           </View>
 
           <Text style={[styles.fieldLabel, { marginTop: 16 }]}>模型</Text>
@@ -596,12 +595,6 @@ const styles = StyleSheet.create({
     color: '#7B4F9D',
     textDecorationLine: 'underline',
   },
-  apiHelpDivider: {
-    fontSize: 12,
-    fontWeight: '800',
-    color: COLORS.warningText,
-  },
-
   // ── Save button ──
   saveBtn: {
     marginTop: 16,
