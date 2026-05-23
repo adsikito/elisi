@@ -43,6 +43,8 @@ interface ClaudeResponse {
   }>;
 }
 
+export type CopilotStreamDeltaHandler = (delta: string, fullText: string) => void;
+
 interface ScheduleCourse {
   title: string;
   dayOfWeek: number;
@@ -638,6 +640,187 @@ async function callCopilotPlanClaude(
   return extractCopilotPlanJSON(content);
 }
 
+function emitSseEvent(
+  eventText: string,
+  onData: (data: string) => void,
+): void {
+  const data = eventText
+    .split('\n')
+    .filter((line) => line.startsWith('data:'))
+    .map((line) => line.slice(5).trimStart())
+    .join('\n')
+    .trim();
+
+  if (data && data !== '[DONE]') {
+    onData(data);
+  }
+}
+
+async function readSseStream(
+  res: Response,
+  onData: (data: string) => void,
+): Promise<boolean> {
+  const reader = res.body?.getReader();
+  if (!reader) return false;
+  if (typeof TextDecoder === 'undefined') {
+    await reader.cancel();
+    return false;
+  }
+
+  const decoder = new TextDecoder();
+  let buffer = '';
+
+  const consume = (chunk: string) => {
+    buffer = (buffer + chunk).replace(/\r\n/g, '\n');
+
+    let eventEnd = buffer.indexOf('\n\n');
+    while (eventEnd !== -1) {
+      emitSseEvent(buffer.slice(0, eventEnd), onData);
+      buffer = buffer.slice(eventEnd + 2);
+      eventEnd = buffer.indexOf('\n\n');
+    }
+  };
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    consume(decoder.decode(value, { stream: true }));
+  }
+
+  consume(decoder.decode());
+  if (buffer.trim()) {
+    emitSseEvent(buffer, onData);
+  }
+
+  return true;
+}
+
+function readOpenAICompatibleDelta(data: string): string {
+  const chunk = tryParseJSON(data);
+  if (!isRecord(chunk) || !Array.isArray(chunk.choices)) return '';
+
+  return chunk.choices
+    .map((choice) => {
+      if (!isRecord(choice) || !isRecord(choice.delta)) return '';
+      return typeof choice.delta.content === 'string' ? choice.delta.content : '';
+    })
+    .join('');
+}
+
+function readClaudeDelta(data: string): string {
+  const chunk = tryParseJSON(data);
+  if (!isRecord(chunk) || chunk.type !== 'content_block_delta') return '';
+  if (!isRecord(chunk.delta)) return '';
+
+  return typeof chunk.delta.text === 'string' ? chunk.delta.text : '';
+}
+
+async function streamCopilotPlanOpenAICompatible(
+  command: string,
+  context: CopilotCommandContext,
+  apiKey: string,
+  provider: ByokProvider,
+  onDelta?: CopilotStreamDeltaHandler,
+): Promise<CopilotPlanResult> {
+  const url = buildChatCompletionsUrl(provider);
+  const providerLabel = getProviderLabel(provider);
+
+  const res = await fetch(url, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${apiKey}`,
+    },
+    body: JSON.stringify({
+      model: getConfiguredModel(provider, 'text'),
+      messages: [
+        { role: 'system', content: COPILOT_SYSTEM_PROMPT },
+        { role: 'user', content: buildCopilotPrompt(command, context) },
+      ],
+      temperature: 0.2,
+      response_format: { type: 'json_object' },
+      stream: true,
+    }),
+  });
+
+  if (!res.ok) {
+    const err = await res.text();
+    throw new Error(`${providerLabel} copilot stream API error (${res.status}): ${err}`);
+  }
+
+  let content = '';
+  const didStream = await readSseStream(res, (data) => {
+    const delta = readOpenAICompatibleDelta(data);
+    if (!delta) return;
+
+    content += delta;
+    onDelta?.(delta, content);
+  });
+
+  if (!didStream) {
+    return callCopilotPlanOpenAICompatible(command, context, apiKey, provider);
+  }
+
+  if (!content.trim()) {
+    throw new Error(`${providerLabel} stream response did not include content.`);
+  }
+
+  return extractCopilotPlanJSON(content);
+}
+
+async function streamCopilotPlanClaude(
+  command: string,
+  context: CopilotCommandContext,
+  apiKey: string,
+  onDelta?: CopilotStreamDeltaHandler,
+): Promise<CopilotPlanResult> {
+  const res = await fetch(buildClaudeMessagesUrl(), {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'x-api-key': apiKey,
+      'anthropic-version': '2023-06-01',
+    },
+    body: JSON.stringify({
+      model: getConfiguredModel('claude', 'text'),
+      max_tokens: 1024,
+      system: COPILOT_SYSTEM_PROMPT,
+      messages: [
+        {
+          role: 'user',
+          content: buildCopilotPrompt(command, context),
+        },
+      ],
+      temperature: 0.2,
+      stream: true,
+    }),
+  });
+
+  if (!res.ok) {
+    const err = await res.text();
+    throw new Error(`Claude copilot stream API error (${res.status}): ${err}`);
+  }
+
+  let content = '';
+  const didStream = await readSseStream(res, (data) => {
+    const delta = readClaudeDelta(data);
+    if (!delta) return;
+
+    content += delta;
+    onDelta?.(delta, content);
+  });
+
+  if (!didStream) {
+    return callCopilotPlanClaude(command, context, apiKey);
+  }
+
+  if (!content.trim()) {
+    throw new Error('Claude stream response did not include content.');
+  }
+
+  return extractCopilotPlanJSON(content);
+}
+
 function normalizeImageDataUrl(base64Image: string): string {
   return base64Image.startsWith('data:image/')
     ? base64Image
@@ -868,6 +1051,25 @@ export async function planCopilotCommand(
   }
 
   return callCopilotPlanOpenAICompatible(command, context, apiKey, provider);
+}
+
+export async function streamCopilotCommand(
+  command: string,
+  context: CopilotCommandContext,
+  onDelta?: CopilotStreamDeltaHandler,
+): Promise<CopilotPlanResult> {
+  const provider = getConfiguredProvider();
+  const apiKey = getByokApiKey(provider);
+
+  if (!apiKey) {
+    throw new Error(`No ${getProviderLabel(provider)} API key found. Configure BYOK in Settings.`);
+  }
+
+  if (provider === 'claude') {
+    return streamCopilotPlanClaude(command, context, apiKey, onDelta);
+  }
+
+  return streamCopilotPlanOpenAICompatible(command, context, apiKey, provider, onDelta);
 }
 
 export function isAIConfigured(): boolean {

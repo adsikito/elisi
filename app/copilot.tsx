@@ -15,7 +15,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import {
   isAIConfigured,
-  planCopilotCommand,
+  streamCopilotCommand,
   type CopilotAction,
   type CopilotPlanResult,
 } from '@/ai/ByokConnector';
@@ -304,7 +304,18 @@ export default function CopilotScreen() {
         throw new Error('No AI API key found.');
       }
 
-      const plan = await planCopilotCommand(trimmed, context);
+      const plan = await streamCopilotCommand(trimmed, context, () => {
+        setMessages((current) =>
+          current.map((message) =>
+            message.id === loadingMessageId
+              ? {
+                  ...message,
+                  text: '正在整理建议',
+                }
+              : message,
+          ),
+        );
+      });
 
       setMessages((current) =>
         current.map((message) =>
@@ -397,7 +408,7 @@ export default function CopilotScreen() {
                   <Ionicons name="checkmark-done-outline" size={16} color="#FFFFFF" />
                 )}
                 <Text style={styles.applyButtonText}>
-                  {isApplying ? '应用中' : '一键应用'}
+                  {isApplying ? '应用中' : '应用建议'}
                 </Text>
               </Pressable>
             ) : null}
